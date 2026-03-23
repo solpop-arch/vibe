@@ -2,6 +2,8 @@ import { useEffect, useRef, useState, useCallback } from 'react'
 import { Terminal } from 'xterm'
 import { FitAddon } from 'xterm-addon-fit'
 import { Unicode11Addon } from 'xterm-addon-unicode11'
+import { WebglAddon } from '@xterm/addon-webgl'
+import { CanvasAddon } from '@xterm/addon-canvas'
 import { io } from 'socket.io-client'
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism'
@@ -18,6 +20,7 @@ const KEY_ALIASES = {
   'ㅗ': 'h', 'ㅓ': 'j', 'ㅏ': 'k', 'ㅣ': 'l',
   'ㅋ': 'z', 'ㅌ': 'x', 'ㅊ': 'c', 'ㅍ': 'v',
   'ㅠ': 'b', 'ㅜ': 'n', 'ㅡ': 'm',
+  '₩': '`',
 }
 const resolveKey = (key) => KEY_ALIASES[key] ?? key
 
@@ -479,9 +482,12 @@ function App() {
 
   const handleFocusChange = useCallback((target) => {
     setActiveFocus(target);
-    if (target === 'explorer' && explorerRef.current) explorerRef.current.focus();
-    else if (target === 'viewer' && viewerRef.current) viewerRef.current.focus();
-    else if (target === 'terminal' && xtermInstance.current) xtermInstance.current.focus();
+    // Use a small delay to ensure React has finished rendering and the element is ready to receive focus
+    setTimeout(() => {
+      if (target === 'explorer' && explorerRef.current) explorerRef.current.focus();
+      else if (target === 'viewer' && viewerRef.current) viewerRef.current.focus();
+      else if (target === 'terminal' && xtermInstance.current) xtermInstance.current.focus();
+    }, 10);
   }, []);
 
   const scheduleFit = useCallback((delay = 50) => {
@@ -574,6 +580,12 @@ function App() {
   };
   handleEscapeKeyRef.current = handleEscapeKey;
 
+  const activeFocusRef = useRef('terminal')
+  activeFocusRef.current = activeFocus
+
+  const handleFocusChangeRef = useRef(null)
+  handleFocusChangeRef.current = handleFocusChange
+
   useEffect(() => {
     if (!terminalRef.current) return;
     const token = new URLSearchParams(window.location.search).get('token')
@@ -583,7 +595,10 @@ function App() {
       fontFamily: 'MesloLGS NF, monospace',
       fontSize: 14,
       theme: { background: '#1e1e1e', foreground: '#ffffff', cursor: '#ffffff' },
-      allowProposedApi: true
+      allowProposedApi: true,
+      bellStyle: 'none',  // Disable visual bell (flashing)
+      macOptionIsMeta: true,
+      scrollback: 5000
     })
     xtermInstance.current = terminal
     const fitAddon = new FitAddon()
@@ -594,13 +609,35 @@ function App() {
     terminal.unicode.activeVersion = '11'
 
     terminal.open(terminalRef.current)
+    
+    // Performance Addons
+    try {
+      const webglAddon = new WebglAddon()
+      terminal.loadAddon(webglAddon)
+      // If WebGL renderer throws or has issues, we'll try Canvas
+      webglAddon.onContextLoss(() => {
+        webglAddon.dispose()
+      })
+    } catch (e) {
+      console.warn('WebGL renderer could not be loaded, falling back to Canvas:', e)
+      try {
+        terminal.loadAddon(new CanvasAddon())
+      } catch (e2) {
+        console.warn('Canvas renderer could not be loaded, using DOM:', e2)
+      }
+    }
+
     fitAddon.fit()
 
     terminal.attachCustomKeyEventHandler((e) => {
       if (e.type === 'keydown') {
-        if (e.ctrlKey && e.key === 'b') { toggleSidebar(); return false; }
-        if (e.ctrlKey && (e.key === '`' || e.code === 'Backquote')) { handleFocusChange('terminal'); return false; }
-        if (e.key === 'Escape') { handleEscapeKeyRef.current(); return false; }
+        const key = resolveKey(e.key);
+        // Ctrl+` is now a Focus Toggle
+        if (e.ctrlKey && (key === '`' || e.code === 'Backquote')) {
+          const nextFocus = activeFocusRef.current === 'terminal' ? 'explorer' : 'terminal';
+          handleFocusChangeRef.current(nextFocus);
+          return false;
+        }
       }
       return true;
     });
@@ -613,17 +650,29 @@ function App() {
     socket.on('terminal-data', (data) => terminal.write(data))
     terminal.onData((data) => socket.emit('terminal-input', data))
 
-    const onResize = () => { fitAddon.fit(); socket.emit('terminal-resize', { cols: terminal.cols, rows: terminal.rows }); };
+    let resizeTimeout;
+    const onResize = () => {
+      clearTimeout(resizeTimeout);
+      resizeTimeout = setTimeout(() => {
+        fitAddon.fit();
+        socket.emit('terminal-resize', { cols: terminal.cols, rows: terminal.rows });
+      }, 50); // Small debounce to avoid flickering during layout shifts
+    };
     const resizeObserver = new ResizeObserver(onResize);
     resizeObserver.observe(terminalRef.current);
     terminal.focus()
     return () => { resizeObserver.disconnect(); socket.disconnect(); terminal.dispose(); }
-  }, [handleFocusChange, toggleSidebar])
+  }, [])
 
   useEffect(() => {
     const handleGlobalKeyDown = (e) => {
-      if (e.ctrlKey && e.key === 'b') { e.preventDefault(); toggleSidebar(); }
-      else if (e.ctrlKey && (e.key === '`' || e.code === 'Backquote')) { e.preventDefault(); handleFocusChange('terminal'); }
+      const key = resolveKey(e.key);
+      if (e.ctrlKey && key === 'b') { e.preventDefault(); toggleSidebar(); }
+      else if (e.ctrlKey && (key === '`' || e.code === 'Backquote')) {
+        e.preventDefault();
+        const nextTarget = activeFocusRef.current === 'terminal' ? 'explorer' : 'terminal';
+        handleFocusChange(nextTarget);
+      }
       else if (e.key === 'Escape') { e.preventDefault(); handleEscapeKeyRef.current(); }
     };
     window.addEventListener('keydown', handleGlobalKeyDown)
@@ -673,9 +722,7 @@ function App() {
   ]
 
   const SHORTCUTS_TERMINAL = [
-    ['Ctrl+B', 'Sidebar'],
-    ['Ctrl+`', 'Terminal'],
-    ['Esc',    'Close'],      // Esc last
+    ['Ctrl+`', 'Explorer'],
   ]
 
   // ─────────────────────────────────────────────────────────────────────────
