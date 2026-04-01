@@ -1,52 +1,123 @@
-# vibe (Web UI) — Lightweight AI IDE
+# vibe
 
-**vibe** is a browser-based, ultra-lightweight AI IDE. It combines the power of your local terminal with an elegant browser UI, providing the most comfortable environment for using AI CLIs like Claude Code and Gemini.
+AI가 만든 결과물을 바로 확인하는, 항상 떠 있는 가벼운 창.
 
-[한국어 설명 (Korean README)](./README.ko.md)
+**vibe .** 그걸로 충분하다.
 
-## 🚀 Getting Started
+## What is Vibe?
 
-### 1. Installation & Linking
-Build the client and link the server command globally to use `vibe` anywhere.
+AI CLI(Claude Code 등)로 코딩할 때, 결과물을 확인하려면 매번 `cat`, `vim`, 또는 무거운 IDE를 열어야 합니다. Vibe는 이 문제를 해결합니다.
+
+- **항상 떠 있다** — AI가 파일을 바꾸면 자동 반영. 도구 전환 비용 제로.
+- **보는 것이 핵심** — 마크다운 렌더링, 코드 구문 강조, 클릭 한 번으로 확인.
+- **가볍고 빠르다** — Tauri 네이티브 앱. ~10MB 번들. 즉시 실행.
+
+## Installation
+
+### Prerequisites
+
+- [Rust](https://rustup.rs/) (1.70+)
+- [Node.js](https://nodejs.org/) (18+)
+
+### Build from source
 
 ```bash
-# Build the client
-cd client
-npm install
-npm run build
-
-# Setup the server and link the command
-cd ../server
-npm install
-npm link
+git clone https://github.com/your-username/vibe.git
+cd vibe
+cd client && npm install && cd ..
+npx @tauri-apps/cli@^2 build
 ```
 
-### 2. Usage
-Navigate to any project directory and type `vibe`.
+빌드된 앱은 `src-tauri/target/release/bundle/` 에 생성됩니다.
+
+### Development
 
 ```bash
-# Start in the current directory
+npx @tauri-apps/cli@^2 dev
+```
+
+## Usage
+
+```bash
+# 프로젝트 폴더를 지정해서 실행
+vibe /path/to/project
+
+# 현재 디렉토리에서 실행
 vibe .
 
-# Start in a specific project directory
-vibe ~/projects/my-awesome-app
+# 폴더 지정 없이 실행 → 폴더 선택 다이얼로그
+vibe
 ```
 
-## ⌨️ Key Shortcuts
+## Features
 
-| Feature | Shortcut | Description |
-|:---:|:---:|:---|
-| **Toggle Sidebar** | <kbd>Ctrl</kbd> + <kbd>B</kbd> | Show or hide the file explorer. |
-| **Focus Terminal** | <kbd>Ctrl</kbd> + <kbd>`</kbd> | Instantly move input focus to the terminal from anywhere. |
-| **Navigate Explorer** | <kbd>Esc</kbd> | Exit the terminal/viewer and move to the file explorer. |
-| **Open File** | <kbd>Enter</kbd> | Select a file in the explorer to open it in the viewer (middle pane). |
-| **Close Viewer** | <kbd>Esc</kbd> | Close the viewer when it has focus. |
+| Feature | Description |
+|---|---|
+| **File Explorer** | 프로젝트 파일 트리 탐색, 키보드 네비게이션 |
+| **File Viewer** | 마크다운 렌더링, 코드 구문 강조, 줄 번호 |
+| **File Editing** | 즉석 편집 모드, Ctrl+S 저장 |
+| **File Watching** | AI가 파일 수정 시 자동 새로고침 (150ms 디바운스) |
+| **File Operations** | 파일/폴더 생성, 이름 변경, 삭제 |
+| **Project Switching** | 런타임에 프로젝트 폴더 변경 |
 
-## ✨ Key Features
-*   **Perfect Terminal**: 100% integrated with your default shell ($SHELL) and supports 256 colors.
-*   **Intelligent Layout**: Automatically transitions to a 3-pane layout when a file is opened, and expands the terminal when closed.
-*   **Security**: Inherently blocks file access outside the local project folder.
-*   **Auto-shutdown**: Automatically terminates the server 3 seconds after all browser tabs are closed.
+## Keyboard Shortcuts
+
+| Key | Action |
+|---|---|
+| `Arrow Up/Down` | 파일 탐색 |
+| `Enter` | 파일 열기 / 풀스크린 토글 |
+| `Backspace` | 상위 디렉토리 |
+| `E` | 편집 모드 |
+| `Ctrl+S` | 저장 |
+| `Ctrl+B` | 사이드바 토글 |
+| `A` / `Shift+A` | 새 파일 / 새 폴더 |
+| `R` | 이름 변경 |
+| `Del` | 삭제 |
+| `C` | 경로 복사 |
+| `Esc` | 닫기 / 뒤로 |
+
+## Tech Stack
+
+| Component | Technology |
+|---|---|
+| App Framework | Tauri v2 |
+| Backend | Rust |
+| Frontend | React + Vite |
+| Markdown | react-markdown + remark-gfm |
+| Code Highlight | react-syntax-highlighter (Prism) |
+| File Watching | notify crate (OS-native) |
+
+## Project Structure
+
+```
+vibe/
+├── src-tauri/           # Rust backend
+│   ├── src/
+│   │   ├── commands/    # Tauri commands (file ops, watcher, dialog)
+│   │   ├── watcher/     # File system watcher with debounce
+│   │   ├── constants.rs # Shared constants
+│   │   ├── error.rs     # Error types
+│   │   ├── state.rs     # App state management
+│   │   └── lib.rs       # App setup
+│   ├── Cargo.toml
+│   └── tauri.conf.json
+├── client/              # React frontend
+│   ├── src/
+│   │   ├── App.jsx      # Main UI component
+│   │   └── api.js       # Tauri IPC layer
+│   └── package.json
+└── README.md
+```
+
+## Roadmap
+
+- [x] **Phase 1**: File tree + viewer + file watching
+- [ ] **Phase 2**: Git integration + project switcher + diff view
+- [ ] **Phase 3**: Dashboard, templates, UI polish → v1.0
+
+## License
+
+MIT
 
 ---
 *Created with vibe-coding.*

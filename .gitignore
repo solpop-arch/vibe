@@ -32,6 +32,9 @@ yarn-error.log*
 *.swp
 *.swo
 
+# Rust build artifacts
+target/
+
 # Project-specific
 .vibe/
 

@@ -1,0 +1,1 @@
+{"default":{"identifier":"default","description":"Default capabilities for vibe","local":true,"windows":["main"],"permissions":["core:default","dialog:default","dialog:allow-open","cli:default","cli:allow-cli-matches"]}}
