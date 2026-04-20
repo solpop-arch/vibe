@@ -188,6 +188,12 @@ impl LinkGraph {
         let g = self.inner.read().unwrap();
         let mut out = Vec::new();
         for md in g.all_md.iter() {
+            // root-level files are entry-points, not orphans
+            if let Some(ref root) = g.root {
+                if md.parent().map(|p| p == root.as_path()).unwrap_or(false) {
+                    continue;
+                }
+            }
             let referenced = g
                 .incoming
                 .get(md)
@@ -328,12 +334,12 @@ mod tests {
     #[test]
     fn remove_file_cleans_up() {
         let g = setup();
-        g.reindex_file(&PathBuf::from("/proj/a.md"), "[b](./b.md)\n");
-        g.reindex_file(&PathBuf::from("/proj/b.md"), "hi\n");
-        g.remove_file(&PathBuf::from("/proj/a.md"));
-        assert!(g.backlinks(&PathBuf::from("/proj/b.md")).is_empty());
-        assert!(g.outgoing_links(&PathBuf::from("/proj/a.md")).is_empty());
-        assert_eq!(g.orphans(), vec!["/proj/b.md".to_string()]);
+        g.reindex_file(&PathBuf::from("/proj/sub/a.md"), "[b](./b.md)\n");
+        g.reindex_file(&PathBuf::from("/proj/sub/b.md"), "hi\n");
+        g.remove_file(&PathBuf::from("/proj/sub/a.md"));
+        assert!(g.backlinks(&PathBuf::from("/proj/sub/b.md")).is_empty());
+        assert!(g.outgoing_links(&PathBuf::from("/proj/sub/a.md")).is_empty());
+        assert_eq!(g.orphans(), vec!["/proj/sub/b.md".to_string()]);
     }
 
     #[test]
@@ -363,21 +369,29 @@ mod tests {
     #[test]
     fn orphan_includes_unreferenced() {
         let g = setup();
-        g.reindex_file(&PathBuf::from("/proj/a.md"), "[b](./b.md)\n");
-        g.reindex_file(&PathBuf::from("/proj/b.md"), "hi\n");
-        g.reindex_file(&PathBuf::from("/proj/c.md"), "alone\n");
+        g.reindex_file(&PathBuf::from("/proj/sub/a.md"), "[b](./b.md)\n");
+        g.reindex_file(&PathBuf::from("/proj/sub/b.md"), "hi\n");
+        g.reindex_file(&PathBuf::from("/proj/sub/c.md"), "alone\n");
         assert_eq!(
             g.orphans(),
-            vec!["/proj/a.md".to_string(), "/proj/c.md".to_string()]
+            vec!["/proj/sub/a.md".to_string(), "/proj/sub/c.md".to_string()]
         );
     }
 
     #[test]
     fn self_reference_ignored() {
         let g = setup();
-        g.reindex_file(&PathBuf::from("/proj/a.md"), "[self](./a.md)\n");
-        assert!(g.backlinks(&PathBuf::from("/proj/a.md")).is_empty());
-        assert_eq!(g.orphans(), vec!["/proj/a.md".to_string()]);
+        g.reindex_file(&PathBuf::from("/proj/sub/a.md"), "[self](./a.md)\n");
+        assert!(g.backlinks(&PathBuf::from("/proj/sub/a.md")).is_empty());
+        assert_eq!(g.orphans(), vec!["/proj/sub/a.md".to_string()]);
+    }
+
+    #[test]
+    fn root_level_files_not_orphan() {
+        let g = setup();
+        g.reindex_file(&PathBuf::from("/proj/README.md"), "# root\n");
+        g.reindex_file(&PathBuf::from("/proj/CLAUDE.md"), "# root\n");
+        assert!(g.orphans().is_empty());
     }
 
     #[test]
