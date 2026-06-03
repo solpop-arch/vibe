@@ -2,12 +2,12 @@
   "$schema": "https://raw.githubusercontent.com/nicovank/tauri-v2-schema/refs/heads/main/tauri.conf.json",
   "productName": "vibe",
   "version": "1.2.0",
-  "identifier": "com.vibe.app",
+  "identifier": "com.vibe.desktop",
   "build": {
     "frontendDist": "../client/dist",
     "devUrl": "http://localhost:5188",
-    "beforeDevCommand": "cd ../client && npm run dev",
-    "beforeBuildCommand": "cd ../client && npm run build"
+    "beforeDevCommand": "cd client && npm run dev",
+    "beforeBuildCommand": "cd client && npm run build"
   },
   "app": {
     "windows": [

@@ -4,6 +4,7 @@ import { getVersion } from '@tauri-apps/api/app'
 import * as api from './api'
 import FileExplorer from './components/FileExplorer'
 import FileViewer from './components/FileViewer'
+import TabBar from './components/TabBar'
 import ProjectDashboard from './components/Dashboard'
 import NoRootScreen, { ProjectDropdown } from './components/NoRootScreen'
 import {
@@ -14,41 +15,6 @@ import {
   SHORTCUTS_VIEWER_VIEW, SHORTCUTS_VIEWER_VIEW_DIRTY, SHORTCUTS_VIEWER_DIFF,
   SHORTCUTS_VIEWER_EDIT, SHORTCUTS_VIEWER_EDIT_MD, SHORTCUTS_EXPLORER,
 } from './constants'
-
-// ── Doc description extraction ───────────────────────────────────────────────
-function stripMd(text) {
-  return text
-    .replace(/!\[[^\]]*\]\([^)]+\)/g, '')        // images
-    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')     // [text](url)
-    .replace(/\*\*([^*]+)\*\*/g, '$1')           // bold
-    .replace(/\*([^*]+)\*/g, '$1')               // italic
-    .replace(/`([^`]+)`/g, '$1')                 // inline code
-    .replace(/^>\s*/, '')                         // blockquote prefix
-    .replace(/^[-*+]\s+/, '')                    // list prefix
-    .trim()
-}
-
-function extractDesc(content) {
-  const lines = content.split('\n')
-  let i = 0
-  // Skip frontmatter block
-  if (lines[0]?.trim() === '---') {
-    i = 1
-    while (i < lines.length && lines[i]?.trim() !== '---') i++
-    i++
-  }
-  let afterH1 = false
-  let fallback = ''
-  for (; i < lines.length; i++) {
-    const t = lines[i].trim()
-    if (!t || t.startsWith('<!--')) continue
-    if (t.startsWith('# ')) { afterH1 = true; continue }
-    if (t.startsWith('#')) continue
-    if (afterH1) return stripMd(t)
-    if (!fallback) fallback = t
-  }
-  return stripMd(fallback)
-}
 
 // ── Sidebar resize ────────────────────────────────────────────────────────────
 const SIDEBAR_DEFAULT_WIDTH = 220
@@ -130,12 +96,8 @@ function App() {
   const activeFocusRef     = useRef('explorer')
 
   const [rootReady, setRootReady]               = useState(false)
-  const [selectedFile, setSelectedFile]         = useState(null)
-  const [fileContent, setFileContent]           = useState('')
-  const [isEditing, setIsEditing]               = useState(false)
-  const [diffMode, setDiffMode]                 = useState(false)
-  const [externallyChanged, setExternallyChanged] = useState(false)
-  const [editContent, setEditContent]           = useState('')
+  const [tabs, setTabs]                         = useState([])
+  const [activeId, setActiveId]                 = useState(null)
   const [pendingAction, setPendingAction]       = useState(null)
   const [activeFocus, setActiveFocus]           = useState('explorer')
   const [sidebarVisible, setSidebarVisible]     = useState(true)
@@ -152,19 +114,54 @@ function App() {
   const [brokenLinks, setBrokenLinks]           = useState([])
   const [orphanDocs, setOrphanDocs]             = useState([])
   const [graphData, setGraphData]               = useState(null)
-  const [fileLoading, setFileLoading]           = useState(false)
   const [projects, setProjects]                 = useState(() => loadProjects())
   const [gitInfo, setGitInfo]                   = useState({ isRepo: false, branch: null, filesByAbs: new Map(), dirtyCount: 0 })
   const [refreshing, setRefreshing]             = useState(false)
   const [justRefreshed, setJustRefreshed]       = useState(false)
-  const [nav, setNav]                           = useState({ stack: [], index: -1 })
-  const navRef                                  = useRef({ stack: [], index: -1 })
-  const navScrollsRef                           = useRef([])
+  const navScrollsByTabRef                      = useRef(new Map())
   const goBackRef                               = useRef(null)
   const goForwardRef                            = useRef(null)
   const gitRefetchTimerRef                      = useRef(null)
   const dashboardRefetchTimerRef                = useRef(null)
+  const activeIdRef                             = useRef(null)
+  const tabsRef                                 = useRef([])
+  const handleCloseTabRef                       = useRef(null)
+  const switchTabRelativeRef                    = useRef(null)
+  activeIdRef.current = activeId
+  tabsRef.current = tabs
+
+  const active                                  = tabs.find(t => t.id === activeId) || null
+  const selectedFile        = active?.file ?? null
+  const fileContent         = active?.content ?? ''
+  const isEditing           = active?.isEditing ?? false
+  const editContent         = active?.editContent ?? ''
+  const externallyChanged   = active?.externallyChanged ?? false
+  const diffMode            = active?.diffMode ?? false
+  const nav                 = active?.nav ?? { stack: [], index: -1 }
+  const fileLoading         = active?.loading ?? false
+  const navRef              = useRef(nav)
   navRef.current = nav
+
+  const updateActiveTab = useCallback((partial) => {
+    setTabs(ts => ts.map(t => t.id === activeIdRef.current ? { ...t, ...(typeof partial === 'function' ? partial(t) : partial) } : t))
+  }, [])
+  const updateTabById = useCallback((id, partial) => {
+    setTabs(ts => ts.map(t => t.id === id ? { ...t, ...(typeof partial === 'function' ? partial(t) : partial) } : t))
+  }, [])
+  const setSelectedFile      = useCallback((file) => updateActiveTab({ file }), [updateActiveTab])
+  const setFileContent       = useCallback((v) => updateActiveTab(t => ({ content: typeof v === 'function' ? v(t.content) : v })), [updateActiveTab])
+  const setIsEditing         = useCallback((v) => updateActiveTab(t => ({ isEditing: typeof v === 'function' ? v(t.isEditing) : v })), [updateActiveTab])
+  const setEditContent       = useCallback((v) => updateActiveTab(t => ({ editContent: typeof v === 'function' ? v(t.editContent) : v })), [updateActiveTab])
+  const setExternallyChanged = useCallback((v) => updateActiveTab(t => ({ externallyChanged: typeof v === 'function' ? v(t.externallyChanged) : v })), [updateActiveTab])
+  const setDiffMode          = useCallback((v) => updateActiveTab(t => ({ diffMode: typeof v === 'function' ? v(t.diffMode) : v })), [updateActiveTab])
+  const setNav               = useCallback((v) => updateActiveTab(t => ({ nav: typeof v === 'function' ? v(t.nav) : v })), [updateActiveTab])
+  const setFileLoading       = useCallback((v) => updateActiveTab(t => ({ loading: typeof v === 'function' ? v(t.loading) : v })), [updateActiveTab])
+
+  const getNavScrolls = useCallback((id) => {
+    let arr = navScrollsByTabRef.current.get(id)
+    if (!arr) { arr = []; navScrollsByTabRef.current.set(id, arr) }
+    return arr
+  }, [])
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme === 'dark' ? 'dark' : '')
@@ -227,15 +224,36 @@ function App() {
 
   const isDirty = isEditing && editContent !== fileContent
 
-  useEffect(() => {
-    if (!selectedFile || selectedFile.isDirectory) { setFileContent(''); setFileLoading(false); return }
-    setIsEditing(false); setEditContent(''); setDiffMode(false)
-    setFileLoading(true)
-    api.readFile(selectedFile.path)
-      .then(d => setFileContent(d.content || ''))
-      .catch(err => setFileContent(formatReadError(err)))
-      .finally(() => setFileLoading(false))
-  }, [selectedFile])
+  const makeTabId = () => `tab-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+
+  const fetchIntoTab = useCallback((id, file) => {
+    api.readFile(file.path)
+      .then(d => updateTabById(id, { content: d.content || '', loading: false }))
+      .catch(err => updateTabById(id, { content: formatReadError(err), loading: false }))
+  }, [updateTabById])
+
+  // Replace active tab's file. navStrategy: {type:'append'} | {type:'history', newIndex} | {type:'reset'}
+  const replaceActiveFile = useCallback((file, navStrategy) => {
+    const id = activeIdRef.current
+    if (!id) return
+    setTabs(ts => ts.map(t => {
+      if (t.id !== id) return t
+      let newNav = t.nav
+      if (navStrategy?.type === 'append') {
+        const truncated = t.nav.stack.slice(0, t.nav.index + 1)
+        const scrolls = navScrollsByTabRef.current.get(id) || []
+        navScrollsByTabRef.current.set(id, scrolls.slice(0, truncated.length))
+        newNav = { stack: [...truncated, file], index: truncated.length }
+      } else if (navStrategy?.type === 'history') {
+        newNav = { ...t.nav, index: navStrategy.newIndex }
+      } else if (navStrategy?.type === 'reset') {
+        navScrollsByTabRef.current.set(id, [])
+        newNav = { stack: [file], index: 0 }
+      }
+      return { ...t, file, content: '', isEditing: false, editContent: '', externallyChanged: false, diffMode: false, loading: true, nav: newNav }
+    }))
+    fetchIntoTab(id, file)
+  }, [fetchIntoTab])
 
   const loadGitStatus = useCallback(async (rootAbs) => {
     try {
@@ -299,21 +317,10 @@ function App() {
       const docsWithLines = await Promise.all(docs.map(async (doc) => {
         try {
           const d = await api.readFile(doc.path)
-          const content = d.content || ''
-          const lines = content.split('\n').length
-          let desc = extractDesc(content)
-          if (desc.length > 60) desc = desc.slice(0, 57) + '...'
-          return { ...doc, lineCount: lines, desc }
-        } catch (_) { return { ...doc, lineCount: 0, desc: '' } }
+          const lines = (d.content || '').split('\n').length
+          return { ...doc, lineCount: lines }
+        } catch (_) { return { ...doc, lineCount: 0 } }
       }))
-      const docGroups = [], folderMap = {}
-      for (const d of docsWithLines) {
-        const groupKey = d.relDir || ''
-        ;(folderMap[groupKey] ??= []).push(d)
-      }
-      if (folderMap['']?.length) docGroups.push({ group: null, items: folderMap[''] })
-      Object.keys(folderMap).filter(k => k).sort().forEach(f => docGroups.push({ group: f + '/', items: folderMap[f] }))
-
       const langCounts = {}
       Object.entries(extCounts).forEach(([ext, count]) => { const lang = EXT_TO_LANG[ext]; if (lang) langCounts[lang] = (langCounts[lang] || 0) + count })
       const totalLang = Object.values(langCounts).reduce((a, b) => a + b, 0) || 1
@@ -324,7 +331,7 @@ function App() {
         .slice(0, RECENT_CHANGES_LIMIT)
         .map(f => makeRecentEntry(f.path, f.modifiedMs))
       setRecentChanges(recentFiles)
-      setDashboardData({ projectName: basenameOf(rootPath_) || 'project', projectPath: rootPath_, totalFiles: allFiles.length, totalFolders, langStats, docGroups })
+      setDashboardData({ projectName: basenameOf(rootPath_) || 'project', projectPath: rootPath_, totalFiles: allFiles.length, totalFolders, langStats, docs: docsWithLines })
     } catch (e) { console.error('Dashboard load failed:', e) }
   }, [])
 
@@ -355,60 +362,106 @@ function App() {
     catch (e) { console.error('Save failed:', e) }
   }, [])
 
+  // View-mode task-checkbox toggle: persist new content directly to the file.
+  const saveContent = useCallback(async (newContent) => {
+    if (!selectedFileRef.current) return
+    try { await api.writeFile(selectedFileRef.current.path, newContent); setFileContent(newContent) }
+    catch (e) { console.error('Save failed:', e) }
+  }, [])
+
+  const openOrSwitchToFile = useCallback((file) => {
+    if (!file || file.isDirectory) return
+    const existing = tabsRef.current.find(t => t.file?.path === file.path)
+    if (existing) {
+      setActiveId(existing.id)
+      setChangedFiles(prev => { if (!prev.has(file.path)) return prev; const n = new Set(prev); n.delete(file.path); return n })
+      handleFocusChange('viewer')
+      return
+    }
+    const id = makeTabId()
+    const newTab = {
+      id, file,
+      content: '', isEditing: false, editContent: '',
+      externallyChanged: false, diffMode: false,
+      nav: { stack: [file], index: 0 }, loading: true,
+    }
+    navScrollsByTabRef.current.set(id, [])
+    setTabs(ts => [...ts, newTab])
+    setActiveId(id)
+    setChangedFiles(prev => { if (!prev.has(file.path)) return prev; const n = new Set(prev); n.delete(file.path); return n })
+    handleFocusChange('viewer')
+    fetchIntoTab(id, file)
+  }, [handleFocusChange, fetchIntoTab])
+
+  const closeTab = useCallback((id) => {
+    const idx = tabsRef.current.findIndex(t => t.id === id)
+    if (idx < 0) return
+    const remaining = tabsRef.current.filter(t => t.id !== id)
+    navScrollsByTabRef.current.delete(id)
+    setTabs(remaining)
+    if (id === activeIdRef.current) {
+      if (remaining.length === 0) { setActiveId(null); handleFocusChange('explorer') }
+      else {
+        const next = remaining[Math.min(idx, remaining.length - 1)]
+        setActiveId(next.id)
+      }
+    }
+  }, [handleFocusChange])
+
   const executeAction = useCallback((action) => {
-    setPendingAction(null); setIsEditing(false)
+    setPendingAction(null)
     switch (action.type) {
       case 'close':
-        setSelectedFile(null); setFileContent(''); setExternallyChanged(false)
-        setNav({ stack: [], index: -1 })
-        navScrollsRef.current = []
-        handleFocusChange('explorer')
+        closeTab(action.id ?? activeIdRef.current)
         break
       case 'changeFile':
-        setSelectedFile(action.file)
-        setChangedFiles(prev => { const n = new Set(prev); n.delete(action.file.path); return n })
-        setExternallyChanged(false)
-        handleFocusChange('viewer')
+        // Replaces ACTIVE tab's file in place (used by internal links + back/forward)
         if (action.fromHistory) {
-          setNav(prev => ({ ...prev, index: action.newIndex }))
-        } else if (action.resetHistory) {
-          setNav({ stack: [action.file], index: 0 })
-          navScrollsRef.current = []
+          replaceActiveFile(action.file, { type: 'history', newIndex: action.newIndex })
         } else {
-          setNav(prev => {
-            const top = prev.index >= 0 ? prev.stack[prev.index] : null
-            if (top?.path === action.file.path) return prev
-            const truncated = prev.stack.slice(0, prev.index + 1)
-            navScrollsRef.current = navScrollsRef.current.slice(0, truncated.length)
-            return { stack: [...truncated, action.file], index: truncated.length }
-          })
+          replaceActiveFile(action.file, { type: 'append' })
         }
+        setChangedFiles(prev => { if (!prev.has(action.file.path)) return prev; const n = new Set(prev); n.delete(action.file.path); return n })
+        handleFocusChange('viewer')
         break
       case 'exitEdit':
+        setIsEditing(false)
         if (externallyChangedRef.current) {
           setExternallyChanged(false)
           if (selectedFileRef.current) {
+            const id = activeIdRef.current
             api.readFile(selectedFileRef.current.path)
-              .then(d => setFileContent(d.content || ''))
-              .catch(err => setFileContent(formatReadError(err)))
+              .then(d => updateTabById(id, { content: d.content || '' }))
+              .catch(err => updateTabById(id, { content: formatReadError(err) }))
           }
         }
         break
       default: console.warn('Unknown action:', action.type)
     }
-  }, [handleFocusChange])
+  }, [handleFocusChange, closeTab, replaceActiveFile, setIsEditing, setExternallyChanged, updateTabById])
 
   const requireClean = useCallback((action) => {
     if (isEditingRef.current && editContentRef.current !== fileContentRef.current) setPendingAction(action); else executeAction(action)
   }, [executeAction])
   requireCleanRef.current = requireClean
 
-  const handleFileSelect       = useCallback((file) => requireClean({ type:'changeFile', file, resetHistory: true }), [requireClean])
+  const handleFileSelect       = useCallback((file) => openOrSwitchToFile(file), [openOrSwitchToFile])
   const handleLinkOpen         = useCallback((file) => requireClean({ type:'changeFile', file }), [requireClean])
   const handleScrollChange     = useCallback((data) => {
+    const id = activeIdRef.current
+    if (!id) return
     const idx = navRef.current.index
-    if (idx >= 0) navScrollsRef.current[idx] = data
-  }, [])
+    if (idx < 0) return
+    const arr = getNavScrolls(id)
+    arr[idx] = data
+  }, [getNavScrolls])
+  const handleCloseTab         = useCallback((id) => {
+    const t = tabsRef.current.find(x => x.id === id)
+    if (!t) return
+    const dirty = t.isEditing && t.editContent !== t.content
+    if (dirty) { setActiveId(id); setPendingAction({ type:'close', id }); return }
+    closeTab(id)
+  }, [closeTab])
   const goBack                 = useCallback(() => {
     if (!selectedFileRef.current) return
     const { stack, index } = navRef.current
@@ -423,8 +476,23 @@ function App() {
     const newIdx = index + 1
     requireCleanRef.current({ type:'changeFile', file: stack[newIdx], fromHistory: true, newIndex: newIdx })
   }, [])
+  const switchToTab            = useCallback((id) => {
+    if (id === activeIdRef.current) return
+    setActiveId(id)
+    handleFocusChange('viewer')
+  }, [handleFocusChange])
+  const switchTabRelative      = useCallback((delta) => {
+    const ts = tabsRef.current
+    if (ts.length < 2) return
+    const idx = ts.findIndex(t => t.id === activeIdRef.current)
+    if (idx < 0) return
+    const next = ts[(idx + delta + ts.length) % ts.length]
+    setActiveId(next.id)
+  }, [])
   goBackRef.current    = goBack
   goForwardRef.current = goForward
+  handleCloseTabRef.current = handleCloseTab
+  switchTabRelativeRef.current = switchTabRelative
   const toggleSidebar          = useCallback(() => setSidebarVisible(p => !p), [])
   const enterEditMode          = useCallback(() => { setDiffMode(false); setEditContent(fileContentRef.current); setIsEditing(true) }, [])
   const enterDiffMode          = useCallback(() => setDiffMode(true), [])
@@ -456,10 +524,11 @@ function App() {
 
   const reloadCurrentFile = useCallback(() => {
     if (!selectedFileRef.current) return
+    const id = activeIdRef.current
     api.readFile(selectedFileRef.current.path)
-      .then(d => { setFileContent(d.content || ''); setExternallyChanged(false) })
-      .catch(err => setFileContent(formatReadError(err)))
-  }, [])
+      .then(d => updateTabById(id, { content: d.content || '', externallyChanged: false }))
+      .catch(err => updateTabById(id, { content: formatReadError(err) }))
+  }, [updateTabById])
 
   const handleViewerKey = (e) => {
     if (!selectedFileRef.current || isEditingRef.current) return false
@@ -489,12 +558,11 @@ function App() {
 
   const switchProject = useCallback(async (path) => {
     await api.setRoot(path)
-    setSelectedFile(null); setFileContent(''); setIsEditing(false); setEditContent('')
+    setTabs([]); setActiveId(null)
+    navScrollsByTabRef.current = new Map()
     setChangedFiles(new Set()); setRecentChanges([])
     setDashboardData(null)
     setBrokenLinks([]); setOrphanDocs([]); setGraphData(null)
-    setNav({ stack: [], index: -1 })
-    navScrollsRef.current = []
     setGitInfo({ isRepo: false, branch: null, filesByAbs: new Map(), dirtyCount: 0 })
     setRootPath(path)
     getCurrentWindow().setTitle(`vibe. — ${basenameOf(path)}`)
@@ -528,30 +596,29 @@ function App() {
       if (paths.length > 0) {
         setRefreshKey(k => k + 1)
         setChangedFiles(prev => { const n = new Set(prev); paths.forEach(p => n.add(p)); return n })
+        // Immediately update recentChanges (all file types) for the watcher badge
         const now = Date.now()
         const filtered = paths.filter(p => !isHiddenFile({ name: basenameOf(p) }))
         if (filtered.length > 0) {
           const filteredSet = new Set(filtered)
           const newEntries = filtered.map(p => makeRecentEntry(p, now))
           setRecentChanges(prev => [...newEntries, ...prev.filter(e => !filteredSet.has(e.path))].slice(0, RECENT_CHANGES_LIMIT))
-          Promise.all(newEntries.map(entry =>
-            api.readFile(entry.path).then(d => ({ path: entry.path, time: entry.time, lineCount: (d.content || '').split('\n').length })).catch(() => null)
-          )).then(results => {
-            const counts = Object.fromEntries(results.filter(Boolean).map(r => [r.path + r.time, r.lineCount]))
-            if (Object.keys(counts).length > 0) setRecentChanges(prev => prev.map(e => counts[e.path + e.time] ? { ...e, lineCount: counts[e.path + e.time] } : e))
-          })
         }
         // Debounced dashboard refresh on file changes
         if (dashboardRefetchTimerRef.current) clearTimeout(dashboardRefetchTimerRef.current)
         dashboardRefetchTimerRef.current = setTimeout(() => { loadDashboard(); loadLinkHealth() }, 2000)
-        // External change detection for the currently viewed file
-        if (selectedFileRef.current && paths.includes(selectedFileRef.current.path)) {
-          if (isEditingRef.current) {
-            setExternallyChanged(true)
+        // External change detection — update any open tab whose file changed
+        const pathSet = new Set(paths)
+        const activeId_ = activeIdRef.current
+        for (const tab of tabsRef.current) {
+          if (!tab.file || !pathSet.has(tab.file.path)) continue
+          const isActive = tab.id === activeId_
+          if (isActive && tab.isEditing) {
+            updateTabById(tab.id, { externallyChanged: true })
           } else {
-            api.readFile(selectedFileRef.current.path)
-              .then(d => setFileContent(d.content || ''))
-              .catch(err => setFileContent(formatReadError(err)))
+            api.readFile(tab.file.path)
+              .then(d => updateTabById(tab.id, { content: d.content || '', externallyChanged: false }))
+              .catch(err => updateTabById(tab.id, { content: formatReadError(err) }))
           }
         }
       }
@@ -573,6 +640,18 @@ function App() {
       else if (e.key === 'Escape') { e.preventDefault(); handleEscapeKeyRef.current() }
       else if (mod && key === 'r') { e.preventDefault(); refreshAll() }
       else if (mod && key === 'f' && activeFocusRef.current === 'viewer' && selectedFileRef.current && !isEditingRef.current) { e.preventDefault(); openSearchRef.current?.() }
+      else if (mod && key === 'w') {
+        // Tab-aware close: shut the active tab if one is open, otherwise quit the app.
+        e.preventDefault()
+        if (activeIdRef.current) handleCloseTabRef.current?.(activeIdRef.current)
+        else getCurrentWindow().close()
+      }
+      else if (mod && e.altKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+        const t = e.target
+        if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return
+        e.preventDefault()
+        switchTabRelativeRef.current?.(e.key === 'ArrowLeft' ? -1 : 1)
+      }
       else if (mod && (e.key === '[' || e.key === ']' || e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
         const t = e.target
         if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return
@@ -646,10 +725,13 @@ function App() {
           />
         )}
 
-        <div style={{ display:'flex', flex:1, overflow:'hidden', background:'var(--surface)' }}>
+        <div style={{ display:'flex', flexDirection:'column', flex:1, overflow:'hidden', background:'var(--surface)' }}>
+          {tabs.length > 0 && (
+            <TabBar tabs={tabs} activeId={activeId} onSelect={switchToTab} onClose={handleCloseTab} />
+          )}
           {selectedFile ? (
             <div style={{ flex:1, minWidth:'40%', overflow:'hidden' }}>
-              <FileViewer innerRef={viewerRef} onFocus={focusViewer} onClose={closeViewer} onEnterEdit={enterEditMode} onExitEdit={exitEditMode} onSave={saveFile} onEditContentChange={setEditContent} selectedFile={selectedFile} content={fileContent} isEditing={isEditing} editContent={editContent} isDirty={isDirty} isMd={isMd} isDark={isDark} isFocused={activeFocus === 'viewer'} gitDirty={gitDirty} diffMode={diffMode} onEnterDiff={enterDiffMode} onExitDiff={exitDiffMode} externallyChanged={externallyChanged} onReload={reloadCurrentFile} openSearchRef={openSearchRef} closeSearchRef={closeSearchRef} rootPath={rootPath} onLinkOpen={handleLinkOpen} onBack={goBack} onForward={goForward} canBack={nav.index > 0} canForward={nav.index >= 0 && nav.index < nav.stack.length - 1} initialScroll={navScrollsRef.current[nav.index]} onScrollChange={handleScrollChange} loading={fileLoading} />
+              <FileViewer key={activeId} innerRef={viewerRef} onFocus={focusViewer} onClose={closeViewer} onEnterEdit={enterEditMode} onExitEdit={exitEditMode} onSave={saveFile} onViewTaskToggle={saveContent} onEditContentChange={setEditContent} selectedFile={selectedFile} content={fileContent} isEditing={isEditing} editContent={editContent} isDirty={isDirty} isMd={isMd} isDark={isDark} isFocused={activeFocus === 'viewer'} gitDirty={gitDirty} diffMode={diffMode} onEnterDiff={enterDiffMode} onExitDiff={exitDiffMode} externallyChanged={externallyChanged} onReload={reloadCurrentFile} openSearchRef={openSearchRef} closeSearchRef={closeSearchRef} rootPath={rootPath} onLinkOpen={handleLinkOpen} onBack={goBack} onForward={goForward} canBack={nav.index > 0} canForward={nav.index >= 0 && nav.index < nav.stack.length - 1} initialScroll={getNavScrolls(activeId)[nav.index]} onScrollChange={handleScrollChange} loading={fileLoading} />
             </div>
           ) : (
             <div style={{ flex:1, display:'flex', flexDirection:'column', overflow:'hidden' }}>

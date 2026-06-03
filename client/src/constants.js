@@ -1,4 +1,5 @@
 // font-size 12.5px × 1.76 ≈ 22. Coupled to textarea + virtualized rows — update together.
+export const EDIT_FONT_PX = 12.5
 export const LINE_HEIGHT_PX = 22
 export const EDIT_PADDING_PX = 16
 // Fixed gutter width — covers up to 99,999 lines, well above the 1MB read cap.

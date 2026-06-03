@@ -1,15 +1,19 @@
 import { memo, useState, useCallback, useMemo } from 'react'
-import { FONT_MONO, FONT_SERIF, SECTION_LABEL, DIVIDER, EXT_TO_LANG, LANG_COLORS, formatAge, getDocIcon, gitBadgeFor, gitStateLabel } from '../constants'
+import { FONT_MONO, FONT_SERIF, FONT_UI, SECTION_LABEL, DIVIDER, EXT_TO_LANG, LANG_COLORS, formatAge, getDocIcon, gitBadgeFor, gitStateLabel } from '../constants'
 import GraphView from './GraphView'
 
-const COLLAPSED_KEY = 'vibe-dashboard-collapsed'
-const PINNED_KEY    = 'vibe-dashboard-pinned'
+const COLLAPSED_KEY   = 'vibe-dashboard-collapsed'
+const PINNED_KEY      = 'vibe-dashboard-pinned'
+const RECENT_FILTER_KEY = 'vibe-recent-filter'  // 'all' | 'docs'
+const DOCS_RECENT_LIMIT = 8  // docs shown in the "Recently Changed" subsection
+const DOCS_PER_FOLDER   = 5  // most-recent docs shown per top-level folder
+const SUB_LABEL = { fontSize:'11px', fontWeight:600, color:'var(--text)', marginBottom:'8px', letterSpacing:'0.02em' }
 function loadCollapsed() { try { return new Set(JSON.parse(localStorage.getItem(COLLAPSED_KEY))) } catch { return new Set() } }
 function saveCollapsed(set) { localStorage.setItem(COLLAPSED_KEY, JSON.stringify([...set])) }
 function loadPinned()    { try { return new Set(JSON.parse(localStorage.getItem(PINNED_KEY)))    } catch { return new Set() } }
 function savePinned(set) { localStorage.setItem(PINNED_KEY,    JSON.stringify([...set])) }
 
-function DocItem({ doc, gitInfo, isPinned, onTogglePin, onFileOpen }) {
+function DocItem({ doc, gitInfo, isPinned, onTogglePin, onFileOpen, age }) {
   const icon = getDocIcon(doc.name)
   const gitState = gitInfo?.filesByAbs?.get(doc.path)
   const badge = gitBadgeFor(gitState)
@@ -22,7 +26,7 @@ function DocItem({ doc, gitInfo, isPinned, onTogglePin, onFileOpen }) {
       <span style={{ fontSize:'14px', width:'20px', textAlign:'center', flexShrink:0, color:'var(--muted)' }}>{icon}</span>
       <div style={{ flex:1, minWidth:0 }}>
         <div style={{ fontSize:'13px', fontWeight:500, color:'var(--text)', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{doc.name}</div>
-        {doc.desc && <div style={{ fontSize:'11px', color:'var(--muted)', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{doc.desc}</div>}
+        {doc.relDir && <div style={{ fontFamily:FONT_MONO, fontSize:'11px', color:'var(--muted)', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{doc.relDir}/</div>}
       </div>
       <button
         className={`dash-pin${isPinned ? ' pinned' : ''}`}
@@ -33,6 +37,9 @@ function DocItem({ doc, gitInfo, isPinned, onTogglePin, onFileOpen }) {
       </button>
       {badge && (
         <span title={gitStateLabel(gitState)} style={{ fontFamily:FONT_MONO, fontSize:'12px', color:badge.color, flexShrink:0, width:'12px', textAlign:'center', lineHeight:1 }}>{badge.glyph}</span>
+      )}
+      {age && (
+        <span style={{ fontFamily:FONT_MONO, fontSize:'10px', color:'var(--muted)', flexShrink:0 }}>{age}</span>
       )}
       {doc.lineCount > 0 && (
         <span style={{ fontFamily:FONT_MONO, fontSize:'10px', color:'var(--muted)', flexShrink:0 }}>{doc.lineCount} lines</span>
@@ -104,6 +111,7 @@ function ProjectDashboard({ data, recentChanges, brokenLinks, orphanDocs, graphD
 
   const [collapsed, setCollapsed] = useState(loadCollapsed)
   const [pinned, setPinned] = useState(loadPinned)
+  const [recentFilter, setRecentFilter] = useState(() => localStorage.getItem(RECENT_FILTER_KEY) || 'all')
 
   const toggleGroup = useCallback((groupName) => {
     setCollapsed(prev => {
@@ -123,8 +131,28 @@ function ProjectDashboard({ data, recentChanges, brokenLinks, orphanDocs, graphD
     })
   }, [])
 
-  const docGroups = data?.docGroups
-  const allDocs    = useMemo(() => docGroups?.flatMap(g => g.items) ?? [], [docGroups])
+  const allDocs = useMemo(() => data?.docs ?? [], [data])
+  const pinnedDocs = useMemo(() => allDocs.filter(d => pinned.has(d.path)), [allDocs, pinned])
+  const recentDocs = useMemo(
+    () => [...allDocs].sort((a, b) => (b.modifiedMs || 0) - (a.modifiedMs || 0)).slice(0, DOCS_RECENT_LIMIT),
+    [allDocs]
+  )
+  // Group every doc under its top-level folder; each folder keeps only its most
+  // recently changed docs, but reports its full doc count.
+  const folderGroups = useMemo(() => {
+    const map = new Map()
+    for (const d of allDocs) {
+      const key = d.parentDir || ''  // '' = project root
+      if (!map.has(key)) map.set(key, [])
+      map.get(key).push(d)
+    }
+    const groups = [...map.entries()].map(([folder, items]) => {
+      const sorted = items.sort((a, b) => (b.modifiedMs || 0) - (a.modifiedMs || 0))
+      return { folder, items: sorted.slice(0, DOCS_PER_FOLDER), total: sorted.length }
+    })
+    groups.sort((a, b) => a.folder === '' ? -1 : b.folder === '' ? 1 : a.folder.localeCompare(b.folder))
+    return groups
+  }, [allDocs])
 
   if (!data) return <div style={{ display:'flex', alignItems:'center', justifyContent:'center', height:'100%', color:'var(--muted)', fontSize:'13px' }}>Loading…</div>
   const { projectName, projectPath, totalFiles, totalFolders, langStats } = data
@@ -199,67 +227,93 @@ function ProjectDashboard({ data, recentChanges, brokenLinks, orphanDocs, graphD
 
       <hr style={DIVIDER} />
 
-      {docGroups.length > 0 && (
+      {allDocs.length > 0 && (
         <div>
           <div style={SECTION_LABEL}>Documents</div>
-          <div style={{ display:'flex', flexDirection:'column', gap:'4px' }}>
-            {docGroups.map((group, gi) => {
-              const groupKey = group.group || `__root_${gi}`
-              const isCollapsed = collapsed.has(groupKey)
-              const sortedItems = [...group.items].sort((a, b) => {
-                const ap = pinned.has(a.path) ? 0 : 1
-                const bp = pinned.has(b.path) ? 0 : 1
-                return ap - bp
-              })
-              if (sortedItems.length === 0 && group.group) return null
-              return (
-                <div key={gi} style={{ marginBottom: group.group ? '8px' : 0 }}>
-                  {group.group && (
-                    <div onClick={() => toggleGroup(groupKey)}
-                      onMouseEnter={e => e.currentTarget.style.color = 'var(--text)'}
-                      onMouseLeave={e => e.currentTarget.style.color = 'var(--muted)'}
-                      style={{ fontFamily:FONT_SERIF, fontStyle:'italic', fontSize:'12px', color:'var(--muted)', marginBottom:'4px', paddingLeft:'4px', cursor:'pointer', display:'flex', alignItems:'center', gap:'6px', transition:'color 100ms' }}>
-                      <span style={{ fontSize:'8px', opacity:0.4, display:'inline-block', transform: isCollapsed ? 'rotate(-90deg)' : 'rotate(0)', transition:'transform 150ms' }}>▼</span>
-                      {group.group}
-                      {isCollapsed && <span style={{ fontSize:'10px', fontFamily:FONT_MONO, fontStyle:'normal' }}>({sortedItems.length})</span>}
+          <div style={{ display:'flex', flexDirection:'column', gap:'20px' }}>
+
+            {pinnedDocs.length > 0 && (
+              <div>
+                <div style={SUB_LABEL}>Pinned</div>
+                {pinnedDocs.map(doc => (
+                  <DocItem key={doc.path} doc={doc} gitInfo={gitInfo} isPinned onTogglePin={togglePin} onFileOpen={onFileOpen} />
+                ))}
+              </div>
+            )}
+
+            <div>
+              <div style={SUB_LABEL}>Recently Changed</div>
+              {recentDocs.map(doc => (
+                <DocItem key={doc.path} doc={doc} gitInfo={gitInfo} isPinned={pinned.has(doc.path)} onTogglePin={togglePin} onFileOpen={onFileOpen} age={doc.modifiedMs ? formatAge(doc.modifiedMs) : null} />
+              ))}
+            </div>
+
+            <div>
+              <div style={SUB_LABEL}>By Folder</div>
+              <div style={{ display:'flex', flexDirection:'column', gap:'8px' }}>
+                {folderGroups.map(group => {
+                  const key = group.folder || '__root'
+                  const label = group.folder === '' ? '(root)' : group.folder + '/'
+                  const isCollapsed = collapsed.has(key)
+                  return (
+                    <div key={key}>
+                      <div onClick={() => toggleGroup(key)}
+                        onMouseEnter={e => e.currentTarget.style.color = 'var(--text)'}
+                        onMouseLeave={e => e.currentTarget.style.color = 'var(--muted)'}
+                        style={{ fontFamily:FONT_SERIF, fontStyle:'italic', fontSize:'12px', color:'var(--muted)', marginBottom:'4px', paddingLeft:'4px', cursor:'pointer', display:'flex', alignItems:'center', gap:'6px', transition:'color 100ms' }}>
+                        <span style={{ fontSize:'8px', opacity:0.4, display:'inline-block', transform: isCollapsed ? 'rotate(-90deg)' : 'rotate(0)', transition:'transform 150ms' }}>▼</span>
+                        {label}
+                        <span style={{ fontSize:'10px', fontFamily:FONT_MONO, fontStyle:'normal', opacity:0.6 }}>({group.total})</span>
+                      </div>
+                      {!isCollapsed && group.items.map(doc => (
+                        <DocItem key={doc.path} doc={doc} gitInfo={gitInfo} isPinned={pinned.has(doc.path)} onTogglePin={togglePin} onFileOpen={onFileOpen} />
+                      ))}
                     </div>
-                  )}
-                  {!isCollapsed && sortedItems.map(doc => (
-                    <DocItem key={doc.path} doc={doc} gitInfo={gitInfo} isPinned={pinned.has(doc.path)} onTogglePin={togglePin} onFileOpen={onFileOpen} />
-                  ))}
-                </div>
-              )
-            })}
+                  )
+                })}
+              </div>
+            </div>
+
           </div>
         </div>
       )}
 
-      {recentChanges.length > 0 && (
+      {(recentChanges?.length > 0) && (
         <>
           <hr style={DIVIDER} />
           <div>
-            <div style={SECTION_LABEL}>Recently Changed</div>
+            <div style={{ display:'flex', alignItems:'center', gap:'8px', marginBottom:'8px' }}>
+              <div style={{ ...SECTION_LABEL, marginBottom:0 }}>Recently Changed</div>
+              <div style={{ display:'flex', gap:'2px', marginLeft:'auto' }}>
+                {['all', 'docs'].map(f => (
+                  <button key={f} onClick={() => { setRecentFilter(f); localStorage.setItem(RECENT_FILTER_KEY, f) }}
+                    style={{ fontFamily:FONT_UI, fontSize:'10px', padding:'1px 6px', borderRadius:'3px', border:'1px solid var(--border)', cursor:'pointer', background: recentFilter === f ? 'var(--accent-sub)' : 'transparent', color: recentFilter === f ? 'var(--accent)' : 'var(--muted)' }}>
+                    {f === 'all' ? 'All' : 'Docs'}
+                  </button>
+                ))}
+              </div>
+            </div>
             <div style={{ display:'flex', flexDirection:'column', gap:'2px' }}>
-              {recentChanges.map((item, i) => {
-                const ext = item.name.split('.').pop()?.toLowerCase() || ''
-                const lang = EXT_TO_LANG[ext] || 'Other'
-                const dotColor = LANG_COLORS[lang] || LANG_COLORS.Other
-                const gitState = gitInfo?.filesByAbs?.get(item.path)
-                const badge = gitBadgeFor(gitState)
-                return (
-                  <div key={item.path + i} className="dash-row" onClick={() => onFileOpen(item)}
-                    draggable onDragStart={e => { e.dataTransfer.setData('text/plain', item.path); e.dataTransfer.effectAllowed = 'copy' }}
-                    style={{ display:'flex', alignItems:'center', gap:'8px', padding:'5px 8px', cursor:'pointer' }}>
-                    <span style={{ width:'6px', height:'6px', borderRadius:'50%', background:dotColor, flexShrink:0 }} />
-                    <span style={{ fontSize:'13px', color:'var(--text)', flex:1 }}>{item.name}</span>
-                    {badge && (
-                      <span title={gitStateLabel(gitState)} style={{ fontFamily:FONT_MONO, fontSize:'12px', color:badge.color, flexShrink:0, width:'12px', textAlign:'center', lineHeight:1 }}>{badge.glyph}</span>
-                    )}
-                    <span style={{ fontFamily:FONT_MONO, fontSize:'10px', color:'var(--muted)' }}>{formatAge(item.time)}</span>
-                    {item.lineCount > 0 && <span style={{ fontFamily:FONT_MONO, fontSize:'10px', color:'var(--muted)', minWidth:'52px', textAlign:'right' }}>{item.lineCount} lines</span>}
-                  </div>
-                )
-              })}
+              {recentChanges
+                .filter(item => recentFilter === 'all' || item.name.endsWith('.md'))
+                .map((item, i) => {
+                  const ext = item.name.split('.').pop()?.toLowerCase() || ''
+                  const lang = EXT_TO_LANG[ext] || 'Other'
+                  const dotColor = LANG_COLORS[lang] || LANG_COLORS.Other
+                  const gitState = gitInfo?.filesByAbs?.get(item.path)
+                  const badge = gitBadgeFor(gitState)
+                  return (
+                    <div key={item.path + i} className="dash-row" onClick={() => onFileOpen(item)}
+                      draggable onDragStart={e => { e.dataTransfer.setData('text/plain', item.path); e.dataTransfer.effectAllowed = 'copy' }}
+                      style={{ display:'flex', alignItems:'center', gap:'8px', padding:'5px 8px', cursor:'pointer' }}>
+                      <span style={{ width:'6px', height:'6px', borderRadius:'50%', background:dotColor, flexShrink:0 }} />
+                      <span style={{ fontSize:'13px', color:'var(--text)', flex:1, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{item.name}</span>
+                      {badge && <span title={gitStateLabel(gitState)} style={{ fontFamily:FONT_MONO, fontSize:'12px', color:badge.color, flexShrink:0 }}>{badge.glyph}</span>}
+                      <span style={{ fontFamily:FONT_MONO, fontSize:'10px', color:'var(--muted)', flexShrink:0 }}>{formatAge(item.time)}</span>
+                      {item.lineCount > 0 && <span style={{ fontFamily:FONT_MONO, fontSize:'10px', color:'var(--muted)', flexShrink:0 }}>{item.lineCount} lines</span>}
+                    </div>
+                  )
+                })}
             </div>
           </div>
         </>

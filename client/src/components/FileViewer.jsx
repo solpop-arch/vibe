@@ -9,7 +9,8 @@ import PlainCodeRow from './PlainCodeRow'
 import DiffView from './DiffView'
 import MarkdownView from './MarkdownView'
 import BacklinksPanel from './BacklinksPanel'
-import { resolveKey, LINE_HEIGHT_PX, EDIT_PADDING_PX, LINE_NUM_WIDTH, FONT_MONO, FONT_UI, EXT_TO_DISPLAY, HIGHLIGHT_SIZE_LIMIT } from '../constants'
+import { resolveKey, EDIT_FONT_PX, LINE_HEIGHT_PX, EDIT_PADDING_PX, LINE_NUM_WIDTH, FONT_MONO, FONT_UI, EXT_TO_DISPLAY, HIGHLIGHT_SIZE_LIMIT } from '../constants'
+import { handleOutlineKey, continueList } from '../outline'
 
 const NavBtn = ({ onClick, enabled, title, label, glyph }) => (
   <button onClick={onClick} disabled={!enabled} title={title} aria-label={label}
@@ -22,7 +23,7 @@ const NavBtn = ({ onClick, enabled, title, label, glyph }) => (
 
 const FileViewer = ({
   selectedFile, content, isEditing, editContent, isDirty, isMd, isDark,
-  onEditContentChange, onEnterEdit, onExitEdit, onSave,
+  onEditContentChange, onEnterEdit, onExitEdit, onSave, onViewTaskToggle,
   isFocused, onFocus, onClose, innerRef,
   gitDirty, diffMode, onEnterDiff, onExitDiff,
   externallyChanged, onReload, openSearchRef, closeSearchRef,
@@ -38,7 +39,7 @@ const FileViewer = ({
   const [searchQuery, setSearchQuery] = useState('')
   const [currentMatchIdx, setCurrentMatchIdx] = useState(0)
   const [copied, setCopied] = useState(false)
-  const [wrapEnabled, setWrapEnabled] = useState(false)
+  const [wrapEnabled, setWrapEnabled] = useState(true)
   const textareaRef       = useRef(null)
   const lineNumbersRef    = useRef(null)
   const searchInputRef    = useRef(null)
@@ -60,6 +61,14 @@ const FileViewer = ({
     return Number.isFinite(n) && n >= 0.5 && n <= 3 ? n : 1
   })
   useEffect(() => { localStorage.setItem('vibe-md-zoom', String(mdZoom)) }, [mdZoom])
+  const [editZoom, setEditZoom] = useState(() => {
+    const n = parseFloat(localStorage.getItem('vibe-edit-zoom'))
+    return Number.isFinite(n) && n >= 0.5 && n <= 3 ? n : 1
+  })
+  useEffect(() => { localStorage.setItem('vibe-edit-zoom', String(editZoom)) }, [editZoom])
+  // Read at edit-entry time only — keeps the scroll-restore effect off editZoom's deps.
+  const editZoomRef = useRef(editZoom)
+  editZoomRef.current = editZoom
 
   useEffect(() => {
     if (!selectedFile?.path || !isMd) { setBrokenHrefs(null); return }
@@ -194,7 +203,7 @@ const FileViewer = ({
       if (!el) return
       if (last) {
         if (last.type === 'code') {
-          el.scrollTop = Math.max(0, last.line * LINE_HEIGHT_PX)
+          el.scrollTop = Math.max(0, last.line * LINE_HEIGHT_PX * editZoomRef.current)
         } else if (last.type === 'md') {
           const denom = el.scrollHeight - el.clientHeight
           if (denom > 0) el.scrollTop = Math.max(0, Math.round(last.ratio * denom))
@@ -273,7 +282,70 @@ const FileViewer = ({
     return () => window.removeEventListener('keydown', handle)
   }, [mdZoomActive])
 
+  // Cmd +/- zoom for the edit textarea. Cmd+0 resets. Mutually exclusive with
+  // mdZoomActive — the markdown preview pane is never the edit pane.
+  const editZoomActive = isEditing && (!isMd || mdTab === 'edit')
+  useEffect(() => {
+    if (!editZoomActive) return
+    const handle = (e) => {
+      if (!(e.metaKey || e.ctrlKey)) return
+      if (e.key === '=' || e.key === '+') {
+        e.preventDefault()
+        setEditZoom(z => Math.min(3, Math.round((z + 0.1) * 100) / 100))
+      } else if (e.key === '-') {
+        e.preventDefault()
+        setEditZoom(z => Math.max(0.5, Math.round((z - 0.1) * 100) / 100))
+      } else if (e.key === '0') {
+        e.preventDefault()
+        setEditZoom(1)
+      }
+    }
+    window.addEventListener('keydown', handle)
+    return () => window.removeEventListener('keydown', handle)
+  }, [editZoomActive])
+
+
   const handleTextareaKeyDown = useCallback((e) => {
+    // Design Ref: §4 — markdown files get outliner keymaps (Tab/Shift+Tab/Cmd+Arrow).
+    // The combo is fully owned (always preventDefault) so a no-op never falls through
+    // to the plain insert-spaces path below.
+    if (isMd) {
+      const isOutlineCombo = e.key === 'Tab'
+        || ((e.metaKey || e.ctrlKey) && (e.key === 'ArrowUp' || e.key === 'ArrowDown'))
+      if (isOutlineCombo) {
+        e.preventDefault()
+        const ta = e.target
+        const res = handleOutlineKey(editContent, ta.selectionStart, ta.selectionEnd, e)
+        if (res) {
+          onEditContentChange(res.content)
+          requestAnimationFrame(() => {
+            if (textareaRef.current) {
+              textareaRef.current.selectionStart = res.selStart
+              textareaRef.current.selectionEnd = res.selEnd
+            }
+          })
+        }
+        return
+      }
+      // Enter continues a list item onto the next line. Skip during IME
+      // composition so a Korean Enter that commits Hangul is left alone.
+      if (e.key === 'Enter' && !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey
+          && !e.nativeEvent?.isComposing && e.keyCode !== 229) {
+        const ta = e.target
+        const res = continueList(editContent, ta.selectionStart, ta.selectionEnd)
+        if (res) {
+          e.preventDefault()
+          onEditContentChange(res.content)
+          requestAnimationFrame(() => {
+            if (textareaRef.current) {
+              textareaRef.current.selectionStart = res.selStart
+              textareaRef.current.selectionEnd = res.selEnd
+            }
+          })
+          return
+        }
+      }
+    }
     if (e.key === 'Tab') {
       e.preventDefault()
       const s = e.target.selectionStart, end = e.target.selectionEnd
@@ -282,7 +354,7 @@ const FileViewer = ({
     } else if ((e.metaKey || e.ctrlKey) && resolveKey(e.key) === 's') { e.preventDefault(); onSave() }
     else if (e.altKey && resolveKey(e.key) === 'z') { e.preventDefault(); setWrapEnabled(w => !w) }
     else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); onExitEdit() }
-  }, [editContent, onEditContentChange, onSave, onExitEdit])
+  }, [isMd, editContent, onEditContentChange, onSave, onExitEdit])
 
   const fileDirPath     = selectedFile?.path?.substring(0, selectedFile?.path?.lastIndexOf('/'))
   const showDiff        = !!selectedFile && diffMode && !isEditing
@@ -302,6 +374,8 @@ const FileViewer = ({
     [lineCount]
   )
   const syntaxStyle     = isDark ? vscDarkPlus : oneLight
+  const editFontPx      = EDIT_FONT_PX * editZoom
+  const editLinePx      = LINE_HEIGHT_PX * editZoom
 
   useEffect(() => {
     if (lineNumbersRef.current) lineNumbersRef.current.scrollTop = 0
@@ -363,7 +437,7 @@ const FileViewer = ({
           {isEditing ? (
             <>
               <button onClick={onSave} disabled={!isDirty} style={{ background: isDirty ? 'var(--accent-sub)' : 'transparent', border:`1px solid ${isDirty ? 'var(--accent)' : 'var(--border)'}`, color: isDirty ? 'var(--accent)' : 'var(--muted)', cursor: isDirty ? 'pointer' : 'default', fontSize:'11px', padding:'2px 8px', borderRadius:'4px', fontFamily:FONT_UI }}>Save</button>
-              <button onClick={onExitEdit} style={{ background:'none', border:'1px solid var(--border)', color:'var(--muted)', cursor:'pointer', fontSize:'11px', padding:'2px 8px', borderRadius:'4px', fontFamily:FONT_UI }}>View</button>
+              <button onClick={onExitEdit} style={{ background:'none', border:'1px solid var(--border)', color:'var(--muted)', cursor:'pointer', fontSize:'11px', padding:'2px 8px', borderRadius:'4px', fontFamily:FONT_UI }}>Exit</button>
             </>
           ) : diffMode ? (
             <>
@@ -445,8 +519,8 @@ const FileViewer = ({
                 borderRight: '1px solid var(--border)',
                 background: 'var(--surface)',
                 fontFamily: FONT_MONO,
-                fontSize: '12.5px',
-                lineHeight: `${LINE_HEIGHT_PX}px`,
+                fontSize: `${editFontPx}px`,
+                lineHeight: `${editLinePx}px`,
                 color: 'var(--border)',
                 textAlign: 'right',
                 userSelect: 'none',
@@ -456,14 +530,14 @@ const FileViewer = ({
                 onScroll={handleTextareaScroll}
                 spellCheck={false}
                 wrap={wrapEnabled ? 'soft' : 'off'}
-                style={{ flex:1, background:'var(--surface)', color:'var(--text)', border:'none', outline:'none', resize:'none', padding:`${EDIT_PADDING_PX}px`, fontFamily:FONT_MONO, fontSize:'12.5px', lineHeight:`${LINE_HEIGHT_PX}px`, letterSpacing:'0.01em', whiteSpace: wrapEnabled ? 'pre-wrap' : 'pre', wordBreak: wrapEnabled ? 'break-all' : undefined }} />
+                style={{ flex:1, background:'var(--surface)', color:'var(--text)', border:'none', outline:'none', resize:'none', padding:`${EDIT_PADDING_PX}px`, fontFamily:FONT_MONO, fontSize:`${editFontPx}px`, lineHeight:`${editLinePx}px`, letterSpacing:'0.01em', whiteSpace: wrapEnabled ? 'pre-wrap' : 'pre', wordBreak: wrapEnabled ? 'break-all' : undefined }} />
             </div>
           ) : showPreviewPane ? (
-            <MarkdownView content={editContent} isDark={isDark} fileDirPath={fileDirPath} rootPath={rootPath} onLinkOpen={onLinkOpen} brokenHrefs={brokenHrefs} zoom={mdZoom} />
+            <MarkdownView content={editContent} isDark={isDark} fileDirPath={fileDirPath} rootPath={rootPath} onLinkOpen={onLinkOpen} brokenHrefs={brokenHrefs} zoom={mdZoom} onTaskToggle={onEditContentChange} onActivateEdit={() => setMdTab('edit')} />
           ) : isMd ? (
             <>
               <MarkdownView content={content} isDark={isDark} fileDirPath={fileDirPath} rootPath={rootPath} onLinkOpen={onLinkOpen} brokenHrefs={brokenHrefs}
-                searchQuery={searchOpen ? searchQuery : ''} currentMatchIdx={currentMatchIdx} onMatchesFound={setMdMatchCount} zoom={mdZoom} />
+                searchQuery={searchOpen ? searchQuery : ''} currentMatchIdx={currentMatchIdx} onMatchesFound={setMdMatchCount} zoom={mdZoom} onTaskToggle={onViewTaskToggle} onActivateEdit={onEnterEdit} />
               <BacklinksPanel path={selectedFile?.path} rootPath={rootPath} onLinkOpen={onLinkOpen} />
             </>
           ) : skipHighlight ? (

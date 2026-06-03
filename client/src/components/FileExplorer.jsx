@@ -351,7 +351,7 @@ const FileExplorer = ({ onFileSelect, isFocused, onFocus, innerRef, onAtRootChan
                   )}
 
                   {item.isDirectory ? (
-                    <span style={{ fontSize:'9px', color:'var(--muted)', width:'10px', flexShrink:0, display:'inline-block', textAlign:'center', transition:'transform 150ms', transform: isExpanded ? 'rotate(0deg)' : 'rotate(-90deg)' }}>▾</span>
+                    <span style={{ fontSize:'13px', color:'var(--text)', width:'14px', flexShrink:0, display:'inline-block', textAlign:'center', transition:'transform 150ms', transform: isExpanded ? 'rotate(0deg)' : 'rotate(-90deg)' }}>▾</span>
                   ) : (
                     <span style={{ fontSize:'11px', color:'var(--muted)', width:'14px', flexShrink:0, textAlign:'center', fontStyle:'normal' }}>{icon.ch}</span>
                   )}

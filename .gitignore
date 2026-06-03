@@ -38,6 +38,7 @@ target/
 
 # Project-specific
 .vibe/
+.bkit/
 
 # Markdown
 *.md

@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef } from 'react'
+import { useState, useEffect, useMemo, useRef, useCallback, Children } from 'react'
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism'
 import { oneLight }    from 'react-syntax-highlighter/dist/esm/styles/prism'
@@ -142,7 +142,18 @@ function BrokenLink({ href, children }) {
   )
 }
 
-function makeMarkdownComponents(isDark, fileDirPath, rootPath, onLinkOpen, brokenHrefs) {
+// Flip the `[ ]` / `[x]` task marker on a 1-based source line. Returns new content, or null.
+function toggleTaskAtLine(content, lineNumber) {
+  const lines = content.split('\n')
+  const i = lineNumber - 1
+  if (i < 0 || i >= lines.length) return null
+  const m = lines[i].match(/^(\s*[-*+]\s+)\[([ xX])\]/)
+  if (!m) return null
+  lines[i] = m[1] + '[' + (m[2] === ' ' ? 'x' : ' ') + ']' + lines[i].slice(m[1].length + 3)
+  return lines.join('\n')
+}
+
+function makeMarkdownComponents(isDark, fileDirPath, rootPath, onLinkOpen, brokenHrefs, onToggleLine) {
   const border = '1px solid var(--border)'
   const hl = isDark ? vscDarkPlus : oneLight
   const isBroken = (href) => !!href && brokenHrefs && brokenHrefs.has(href)
@@ -167,7 +178,24 @@ function makeMarkdownComponents(isDark, fileDirPath, rootPath, onLinkOpen, broke
     },
     ul: ({children}) => <ul style={{ paddingLeft:'20px', marginBottom:'12px', marginTop:'6px' }}>{children}</ul>,
     ol: ({children}) => <ol style={{ paddingLeft:'20px', marginBottom:'12px', marginTop:'6px' }}>{children}</ol>,
-    li: ({children}) => <li style={{ marginBottom:'6px', color:'var(--text)', lineHeight:'1.7' }}>{children}</li>,
+    li: ({children, node}) => {
+      // GFM task-list items carry a checkbox <input> child — make it click-toggleable.
+      const arr = Children.toArray(children)
+      const box = arr.find(c => c?.type === 'input' && c?.props?.type === 'checkbox')
+      if (box && onToggleLine) {
+        const line = node?.position?.start?.line
+        const label = arr.filter(c => c !== box)
+        return (
+          <li style={{ listStyle:'none', marginLeft:'-20px', marginBottom:'6px', color:'var(--text)', lineHeight:'1.7' }}>
+            <input type="checkbox" checked={!!box.props.checked} disabled={!line}
+              onChange={() => line && onToggleLine(line)}
+              style={{ marginRight:'8px', cursor: line ? 'pointer' : 'default', accentColor:'var(--accent)', verticalAlign:'middle' }} />
+            {label}
+          </li>
+        )
+      }
+      return <li style={{ marginBottom:'6px', color:'var(--text)', lineHeight:'1.7' }}>{children}</li>
+    },
     blockquote: ({children}) => <blockquote style={{ borderLeft:'3px solid var(--accent)', paddingLeft:'16px', margin:'0 0 8px 0', color:'var(--muted)' }}>{children}</blockquote>,
     hr: () => <hr style={{ border:'none', borderTop:'1px solid var(--border)', margin:'24px 0' }} />,
     strong: ({children}) => <strong style={{ fontWeight:600 }}>{children}</strong>,
@@ -180,8 +208,19 @@ function makeMarkdownComponents(isDark, fileDirPath, rootPath, onLinkOpen, broke
   }
 }
 
-export default function MarkdownView({ content, isDark, fileDirPath, rootPath, onLinkOpen, brokenHrefs, searchQuery = '', currentMatchIdx = 0, onMatchesFound, zoom = 1 }) {
-  const components = useMemo(() => makeMarkdownComponents(isDark, fileDirPath, rootPath, onLinkOpen, brokenHrefs), [isDark, fileDirPath, rootPath, onLinkOpen, brokenHrefs])
+export default function MarkdownView({ content, isDark, fileDirPath, rootPath, onLinkOpen, brokenHrefs, searchQuery = '', currentMatchIdx = 0, onMatchesFound, zoom = 1, onTaskToggle, onActivateEdit }) {
+  const handleToggleLine = useCallback((line) => {
+    if (!onTaskToggle) return
+    const next = toggleTaskAtLine(content, line)
+    if (next != null && next !== content) onTaskToggle(next)
+  }, [content, onTaskToggle])
+  const handleDoubleClick = useCallback((e) => {
+    if (!onActivateEdit) return
+    if (e.target.closest('input, a')) return
+    if (window.getSelection()?.toString().length > 0) return
+    onActivateEdit()
+  }, [onActivateEdit])
+  const components = useMemo(() => makeMarkdownComponents(isDark, fileDirPath, rootPath, onLinkOpen, brokenHrefs, onTaskToggle ? handleToggleLine : null), [isDark, fileDirPath, rootPath, onLinkOpen, brokenHrefs, onTaskToggle, handleToggleLine])
   const processedContent = useMemo(() => preprocessKoreanBold(content), [content])
   const containerRef = useRef(null)
   const currentMarkRef = useRef(null)
@@ -257,7 +296,7 @@ export default function MarkdownView({ content, isDark, fileDirPath, rootPath, o
   }, [currentMatchIdx, searchQuery, content])
 
   return (
-    <div ref={containerRef} style={{ color:'var(--text)', lineHeight:'1.75', fontSize:'14px', maxWidth:'72ch', zoom }}>
+    <div ref={containerRef} onDoubleClick={onActivateEdit ? handleDoubleClick : undefined} style={{ color:'var(--text)', lineHeight:'1.75', fontSize:'14px', maxWidth:'72ch', zoom }}>
       <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]} rehypePlugins={[rehypeRaw]} components={components}>{processedContent}</ReactMarkdown>
     </div>
   )
