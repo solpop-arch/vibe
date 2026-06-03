@@ -180,7 +180,7 @@ function makeMarkdownComponents(isDark, fileDirPath, rootPath, onLinkOpen, broke
   }
 }
 
-export default function MarkdownView({ content, isDark, fileDirPath, rootPath, onLinkOpen, brokenHrefs, searchQuery = '', currentMatchIdx = 0, onMatchesFound }) {
+export default function MarkdownView({ content, isDark, fileDirPath, rootPath, onLinkOpen, brokenHrefs, searchQuery = '', currentMatchIdx = 0, onMatchesFound, zoom = 1 }) {
   const components = useMemo(() => makeMarkdownComponents(isDark, fileDirPath, rootPath, onLinkOpen, brokenHrefs), [isDark, fileDirPath, rootPath, onLinkOpen, brokenHrefs])
   const processedContent = useMemo(() => preprocessKoreanBold(content), [content])
   const containerRef = useRef(null)
@@ -257,7 +257,7 @@ export default function MarkdownView({ content, isDark, fileDirPath, rootPath, o
   }, [currentMatchIdx, searchQuery, content])
 
   return (
-    <div ref={containerRef} style={{ color:'var(--text)', lineHeight:'1.75', fontSize:'14px', maxWidth:'72ch' }}>
+    <div ref={containerRef} style={{ color:'var(--text)', lineHeight:'1.75', fontSize:'14px', maxWidth:'72ch', zoom }}>
       <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]} rehypePlugins={[rehypeRaw]} components={components}>{processedContent}</ReactMarkdown>
     </div>
   )

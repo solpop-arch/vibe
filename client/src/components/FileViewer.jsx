@@ -55,6 +55,11 @@ const FileViewer = ({
 
   const [mdMatchCount, setMdMatchCount] = useState(0)
   const [brokenHrefs, setBrokenHrefs] = useState(null)
+  const [mdZoom, setMdZoom] = useState(() => {
+    const n = parseFloat(localStorage.getItem('vibe-md-zoom'))
+    return Number.isFinite(n) && n >= 0.5 && n <= 3 ? n : 1
+  })
+  useEffect(() => { localStorage.setItem('vibe-md-zoom', String(mdZoom)) }, [mdZoom])
 
   useEffect(() => {
     if (!selectedFile?.path || !isMd) { setBrokenHrefs(null); return }
@@ -247,6 +252,27 @@ const FileViewer = ({
     return () => window.removeEventListener('keydown', handle)
   }, [isEditing, isMd])
 
+  // Cmd +/- zoom for markdown preview. Cmd+0 resets.
+  const mdZoomActive = isMd && !diffMode && (!isEditing || mdTab === 'preview')
+  useEffect(() => {
+    if (!mdZoomActive) return
+    const handle = (e) => {
+      if (!(e.metaKey || e.ctrlKey)) return
+      if (e.key === '=' || e.key === '+') {
+        e.preventDefault()
+        setMdZoom(z => Math.min(3, Math.round((z + 0.1) * 100) / 100))
+      } else if (e.key === '-') {
+        e.preventDefault()
+        setMdZoom(z => Math.max(0.5, Math.round((z - 0.1) * 100) / 100))
+      } else if (e.key === '0') {
+        e.preventDefault()
+        setMdZoom(1)
+      }
+    }
+    window.addEventListener('keydown', handle)
+    return () => window.removeEventListener('keydown', handle)
+  }, [mdZoomActive])
+
   const handleTextareaKeyDown = useCallback((e) => {
     if (e.key === 'Tab') {
       e.preventDefault()
@@ -433,11 +459,11 @@ const FileViewer = ({
                 style={{ flex:1, background:'var(--surface)', color:'var(--text)', border:'none', outline:'none', resize:'none', padding:`${EDIT_PADDING_PX}px`, fontFamily:FONT_MONO, fontSize:'12.5px', lineHeight:`${LINE_HEIGHT_PX}px`, letterSpacing:'0.01em', whiteSpace: wrapEnabled ? 'pre-wrap' : 'pre', wordBreak: wrapEnabled ? 'break-all' : undefined }} />
             </div>
           ) : showPreviewPane ? (
-            <MarkdownView content={editContent} isDark={isDark} fileDirPath={fileDirPath} rootPath={rootPath} onLinkOpen={onLinkOpen} brokenHrefs={brokenHrefs} />
+            <MarkdownView content={editContent} isDark={isDark} fileDirPath={fileDirPath} rootPath={rootPath} onLinkOpen={onLinkOpen} brokenHrefs={brokenHrefs} zoom={mdZoom} />
           ) : isMd ? (
             <>
               <MarkdownView content={content} isDark={isDark} fileDirPath={fileDirPath} rootPath={rootPath} onLinkOpen={onLinkOpen} brokenHrefs={brokenHrefs}
-                searchQuery={searchOpen ? searchQuery : ''} currentMatchIdx={currentMatchIdx} onMatchesFound={setMdMatchCount} />
+                searchQuery={searchOpen ? searchQuery : ''} currentMatchIdx={currentMatchIdx} onMatchesFound={setMdMatchCount} zoom={mdZoom} />
               <BacklinksPanel path={selectedFile?.path} rootPath={rootPath} onLinkOpen={onLinkOpen} />
             </>
           ) : skipHighlight ? (
