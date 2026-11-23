@@ -9,17 +9,12 @@ import PlainCodeRow from './PlainCodeRow'
 import DiffView from './DiffView'
 import MarkdownView from './MarkdownView'
 import BacklinksPanel from './BacklinksPanel'
-import { resolveKey, EDIT_FONT_PX, LINE_HEIGHT_PX, EDIT_PADDING_PX, LINE_NUM_WIDTH, FONT_MONO, FONT_UI, EXT_TO_DISPLAY, HIGHLIGHT_SIZE_LIMIT } from '../constants'
-import { handleOutlineKey, continueList } from '../outline'
-
-const NavBtn = ({ onClick, enabled, title, label, glyph }) => (
-  <button onClick={onClick} disabled={!enabled} title={title} aria-label={label}
-    onMouseEnter={e => { if (enabled) e.currentTarget.style.color = 'var(--accent)' }}
-    onMouseLeave={e => { if (enabled) e.currentTarget.style.color = 'var(--muted)' }}
-    style={{ background:'none', border:'none', color: enabled ? 'var(--muted)' : 'var(--border)', cursor: enabled ? 'pointer' : 'default', fontSize:'18px', lineHeight:1, padding:'0 6px', opacity: enabled ? 1 : 0.35, fontFamily: FONT_UI, transition:'color 150ms' }}>
-    {glyph}
-  </button>
-)
+import ViewerHeader from './ViewerHeader'
+import ViewerSearchBar from './ViewerSearchBar'
+import EditPane from './EditPane'
+import { usePersistedZoom } from '../hooks/usePersistedZoom'
+import { useFileSearch } from '../hooks/useFileSearch'
+import { resolveKey, LINE_HEIGHT_PX, FONT_MONO, EXT_TO_DISPLAY, HIGHLIGHT_SIZE_LIMIT } from '../constants'
 
 const FileViewer = ({
   selectedFile, content, isEditing, editContent, isDirty, isMd, isDark,
@@ -35,37 +30,31 @@ const FileViewer = ({
   const [diffData, setDiffData] = useState(null)
   const [diffError, setDiffError] = useState('')
   const [diffSideBySide, setDiffSideBySide] = useState(false)
-  const [searchOpen, setSearchOpen] = useState(false)
-  const [searchQuery, setSearchQuery] = useState('')
-  const [currentMatchIdx, setCurrentMatchIdx] = useState(0)
   const [copied, setCopied] = useState(false)
   const [wrapEnabled, setWrapEnabled] = useState(true)
-  const textareaRef       = useRef(null)
-  const lineNumbersRef    = useRef(null)
-  const searchInputRef    = useRef(null)
-  const listRef           = useRef(null)
+  const textareaRef        = useRef(null)
+  const listRef            = useRef(null)
   const scrollContainerRef = useRef(null)
-  const pendingScrollRef  = useRef(null)
-  const lastViewScrollRef = useRef(null)  // { type:'code', line } | { type:'md', ratio }
+  const pendingScrollRef   = useRef(null)
+  const lastViewScrollRef  = useRef(null)  // { type:'code', line } | { type:'md', ratio }
   const ext = selectedFile?.name.split('.').pop()?.toLowerCase() ?? ''
   const langBadge = EXT_TO_DISPLAY[ext] || ext || '—'
 
-  const handleTextareaScroll = useCallback((e) => {
-    if (lineNumbersRef.current) lineNumbersRef.current.scrollTop = e.currentTarget.scrollTop
-  }, [])
-
-  const [mdMatchCount, setMdMatchCount] = useState(0)
   const [brokenHrefs, setBrokenHrefs] = useState(null)
-  const [mdZoom, setMdZoom] = useState(() => {
-    const n = parseFloat(localStorage.getItem('vibe-md-zoom'))
-    return Number.isFinite(n) && n >= 0.5 && n <= 3 ? n : 1
-  })
-  useEffect(() => { localStorage.setItem('vibe-md-zoom', String(mdZoom)) }, [mdZoom])
-  const [editZoom, setEditZoom] = useState(() => {
-    const n = parseFloat(localStorage.getItem('vibe-edit-zoom'))
-    return Number.isFinite(n) && n >= 0.5 && n <= 3 ? n : 1
-  })
-  useEffect(() => { localStorage.setItem('vibe-edit-zoom', String(editZoom)) }, [editZoom])
+
+  const search = useFileSearch({ content, isMd, listRef, openSearchRef, closeSearchRef })
+  const {
+    searchOpen, searchQuery, setSearchQuery, currentMatchIdx, setCurrentMatchIdx, setMdMatchCount,
+    totalMatches, searchInputRef, searchNext, searchPrev, closeSearch, searchMatchSet, currentMatchLine,
+  } = search
+
+  // Cmd +/- zoom for markdown preview (Cmd+0 resets).
+  const mdZoomActive = isMd && !diffMode && (!isEditing || mdTab === 'preview')
+  const mdZoom = usePersistedZoom('vibe-md-zoom', mdZoomActive)
+  // Cmd +/- zoom for the edit textarea. Mutually exclusive with mdZoomActive —
+  // the markdown preview pane is never the edit pane.
+  const editZoomActive = isEditing && (!isMd || mdTab === 'edit')
+  const editZoom = usePersistedZoom('vibe-edit-zoom', editZoomActive)
   // Read at edit-entry time only — keeps the scroll-restore effect off editZoom's deps.
   const editZoomRef = useRef(editZoom)
   editZoomRef.current = editZoom
@@ -90,67 +79,6 @@ const FileViewer = ({
       unlistenPromises.forEach(p => p.then(fn => fn && fn()).catch(() => {}))
     }
   }, [selectedFile?.path, isMd])
-
-  const searchMatches = useMemo(() => {
-    if (!searchQuery || !content || isMd) return []
-    const q = searchQuery.toLowerCase()
-    const lines = content.split('\n')
-    const matches = []
-    for (let i = 0; i < lines.length; i++) {
-      if (lines[i].toLowerCase().includes(q)) matches.push(i)
-    }
-    return matches
-  }, [searchQuery, content, isMd])
-
-  const totalMatches = isMd ? mdMatchCount : searchMatches.length
-
-  useEffect(() => {
-    if (totalMatches === 0) setCurrentMatchIdx(0)
-    else if (currentMatchIdx >= totalMatches) setCurrentMatchIdx(0)
-  }, [totalMatches])
-
-  useEffect(() => {
-    if (isMd) return
-    if (searchMatches.length > 0 && listRef.current) {
-      listRef.current.scrollToRow({ index: searchMatches[currentMatchIdx], align: 'center' })
-    }
-  }, [currentMatchIdx, searchMatches, isMd])
-
-  const searchNext = useCallback(() => {
-    if (totalMatches === 0) return
-    setCurrentMatchIdx(i => (i + 1) % totalMatches)
-  }, [totalMatches])
-
-  const searchPrev = useCallback(() => {
-    if (totalMatches === 0) return
-    setCurrentMatchIdx(i => (i - 1 + totalMatches) % totalMatches)
-  }, [totalMatches])
-
-  const openSearch = useCallback(() => {
-    setSearchOpen(true)
-    setTimeout(() => searchInputRef.current?.focus(), 0)
-  }, [])
-
-  // Expose openSearch to parent via ref
-  useEffect(() => {
-    if (openSearchRef) openSearchRef.current = openSearch
-  }, [openSearchRef, openSearch])
-
-  const closeSearch = useCallback(() => {
-    setSearchOpen(false)
-    setSearchQuery('')
-    setCurrentMatchIdx(0)
-  }, [])
-
-  // Expose "close if open" so the parent's Esc path can swallow before closing the file
-  useEffect(() => {
-    if (!closeSearchRef) return
-    closeSearchRef.current = () => {
-      if (!searchOpen) return false
-      closeSearch()
-      return true
-    }
-  }, [closeSearchRef, searchOpen, closeSearch])
 
   const copyAll = useCallback(() => {
     if (!content) return
@@ -261,100 +189,9 @@ const FileViewer = ({
     return () => window.removeEventListener('keydown', handle)
   }, [isEditing, isMd])
 
-  // Cmd +/- zoom for markdown preview. Cmd+0 resets.
-  const mdZoomActive = isMd && !diffMode && (!isEditing || mdTab === 'preview')
-  useEffect(() => {
-    if (!mdZoomActive) return
-    const handle = (e) => {
-      if (!(e.metaKey || e.ctrlKey)) return
-      if (e.key === '=' || e.key === '+') {
-        e.preventDefault()
-        setMdZoom(z => Math.min(3, Math.round((z + 0.1) * 100) / 100))
-      } else if (e.key === '-') {
-        e.preventDefault()
-        setMdZoom(z => Math.max(0.5, Math.round((z - 0.1) * 100) / 100))
-      } else if (e.key === '0') {
-        e.preventDefault()
-        setMdZoom(1)
-      }
-    }
-    window.addEventListener('keydown', handle)
-    return () => window.removeEventListener('keydown', handle)
-  }, [mdZoomActive])
-
-  // Cmd +/- zoom for the edit textarea. Cmd+0 resets. Mutually exclusive with
-  // mdZoomActive — the markdown preview pane is never the edit pane.
-  const editZoomActive = isEditing && (!isMd || mdTab === 'edit')
-  useEffect(() => {
-    if (!editZoomActive) return
-    const handle = (e) => {
-      if (!(e.metaKey || e.ctrlKey)) return
-      if (e.key === '=' || e.key === '+') {
-        e.preventDefault()
-        setEditZoom(z => Math.min(3, Math.round((z + 0.1) * 100) / 100))
-      } else if (e.key === '-') {
-        e.preventDefault()
-        setEditZoom(z => Math.max(0.5, Math.round((z - 0.1) * 100) / 100))
-      } else if (e.key === '0') {
-        e.preventDefault()
-        setEditZoom(1)
-      }
-    }
-    window.addEventListener('keydown', handle)
-    return () => window.removeEventListener('keydown', handle)
-  }, [editZoomActive])
-
-
-  const handleTextareaKeyDown = useCallback((e) => {
-    // Design Ref: §4 — markdown files get outliner keymaps (Tab/Shift+Tab/Cmd+Arrow).
-    // The combo is fully owned (always preventDefault) so a no-op never falls through
-    // to the plain insert-spaces path below.
-    if (isMd) {
-      const isOutlineCombo = e.key === 'Tab'
-        || ((e.metaKey || e.ctrlKey) && (e.key === 'ArrowUp' || e.key === 'ArrowDown'))
-      if (isOutlineCombo) {
-        e.preventDefault()
-        const ta = e.target
-        const res = handleOutlineKey(editContent, ta.selectionStart, ta.selectionEnd, e)
-        if (res) {
-          onEditContentChange(res.content)
-          requestAnimationFrame(() => {
-            if (textareaRef.current) {
-              textareaRef.current.selectionStart = res.selStart
-              textareaRef.current.selectionEnd = res.selEnd
-            }
-          })
-        }
-        return
-      }
-      // Enter continues a list item onto the next line. Skip during IME
-      // composition so a Korean Enter that commits Hangul is left alone.
-      if (e.key === 'Enter' && !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey
-          && !e.nativeEvent?.isComposing && e.keyCode !== 229) {
-        const ta = e.target
-        const res = continueList(editContent, ta.selectionStart, ta.selectionEnd)
-        if (res) {
-          e.preventDefault()
-          onEditContentChange(res.content)
-          requestAnimationFrame(() => {
-            if (textareaRef.current) {
-              textareaRef.current.selectionStart = res.selStart
-              textareaRef.current.selectionEnd = res.selEnd
-            }
-          })
-          return
-        }
-      }
-    }
-    if (e.key === 'Tab') {
-      e.preventDefault()
-      const s = e.target.selectionStart, end = e.target.selectionEnd
-      onEditContentChange(editContent.slice(0, s) + '  ' + editContent.slice(end))
-      requestAnimationFrame(() => { if (textareaRef.current) { textareaRef.current.selectionStart = s + 2; textareaRef.current.selectionEnd = s + 2 } })
-    } else if ((e.metaKey || e.ctrlKey) && resolveKey(e.key) === 's') { e.preventDefault(); onSave() }
-    else if (e.altKey && resolveKey(e.key) === 'z') { e.preventDefault(); setWrapEnabled(w => !w) }
-    else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); onExitEdit() }
-  }, [isMd, editContent, onEditContentChange, onSave, onExitEdit])
+  const toggleWrap = useCallback(() => setWrapEnabled(w => !w), [])
+  const toggleSideBySide = useCallback(() => setDiffSideBySide(p => !p), [])
+  const handleSearchQueryChange = useCallback((v) => { setSearchQuery(v); setCurrentMatchIdx(0) }, [setSearchQuery, setCurrentMatchIdx])
 
   const fileDirPath     = selectedFile?.path?.substring(0, selectedFile?.path?.lastIndexOf('/'))
   const showDiff        = !!selectedFile && diffMode && !isEditing
@@ -369,20 +206,7 @@ const FileViewer = ({
     for (let i = 0; i < activeContent.length; i++) if (activeContent[i] === '\n') n++
     return n
   }, [activeContent])
-  const lineNumbersText = useMemo(
-    () => Array.from({ length: lineCount }, (_, i) => String(i + 1)).join('\n'),
-    [lineCount]
-  )
   const syntaxStyle     = isDark ? vscDarkPlus : oneLight
-  const editFontPx      = EDIT_FONT_PX * editZoom
-  const editLinePx      = LINE_HEIGHT_PX * editZoom
-
-  useEffect(() => {
-    if (lineNumbersRef.current) lineNumbersRef.current.scrollTop = 0
-  }, [selectedFile, isEditing])
-
-  const searchMatchSet = useMemo(() => new Set(searchMatches), [searchMatches])
-  const currentMatchLine = searchMatches.length > 0 ? searchMatches[currentMatchIdx] : -1
 
   // Large files skip syntax highlighting — prism's whole-content tokenization would block the UI.
   const skipHighlight = !isMd && !isEditing && content.length > HIGHLIGHT_SIZE_LIMIT
@@ -403,100 +227,23 @@ const FileViewer = ({
 
   return (
     <div ref={innerRef} tabIndex={0} onFocus={onFocus} style={{ display:'flex', flexDirection:'column', height:'100%', outline:'none', background:'var(--surface)' }}>
-      {/* Header */}
-      <div style={{ height:'34px', minHeight:'34px', borderBottom:'1px solid var(--border)', display:'flex', alignItems:'center', padding:'0 16px', gap:'16px', flexShrink:0 }}>
-        <div style={{ display:'flex', alignItems:'center', gap:'2px', flexShrink:0, marginRight:'-8px' }}>
-          <NavBtn onClick={onBack}    enabled={canBack}    title="Back (⌘[ or ⌘←)"    label="Back"    glyph="‹" />
-          <NavBtn onClick={onForward} enabled={canForward} title="Forward (⌘] or ⌘→)" label="Forward" glyph="›" />
-        </div>
-        <span style={{ fontSize:'13px', fontWeight:500, color: isDirty ? 'var(--accent)' : 'var(--text)', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', transition:'color 150ms' }}>
-          {selectedFile?.name}{isDirty ? ' *' : ''}
-        </span>
-        <span style={{ fontSize:'10px', color:'var(--muted)', background:'var(--surface-2)', border:'1px solid var(--border)', borderRadius:'4px', padding:'1px 6px', fontFamily:FONT_MONO, flexShrink:0 }}>{langBadge}</span>
-        {skipHighlight && (
-          <span title="Syntax highlighting disabled for files over 1MB" style={{ fontSize:'10px', color:'var(--muted)', fontFamily:FONT_MONO, flexShrink:0, opacity:0.6 }}>plain</span>
-        )}
+      <ViewerHeader
+        selectedFile={selectedFile} langBadge={langBadge} skipHighlight={skipHighlight}
+        isDirty={isDirty} isEditing={isEditing} isMd={isMd} mdTab={mdTab} onMdTabChange={setMdTab}
+        externallyChanged={externallyChanged} onReload={onReload}
+        diffMode={diffMode} diffSideBySide={diffSideBySide} onToggleSideBySide={toggleSideBySide}
+        gitDirty={gitDirty} onEnterDiff={onEnterDiff} onExitDiff={onExitDiff}
+        onEnterEdit={onEnterEdit} onExitEdit={onExitEdit} onSave={onSave}
+        copied={copied} onCopy={copyAll} lineCount={lineCount} onClose={onClose}
+        onBack={onBack} onForward={onForward} canBack={canBack} canForward={canForward}
+      />
 
-        {isEditing && isMd && (
-          <div style={{ display:'flex' }}>
-            {['edit','preview'].map(tab => (
-              <button key={tab} onClick={() => setMdTab(tab)} style={{ background:'none', border:'none', padding:'4px 12px', fontSize:'12px', cursor:'pointer', color: mdTab === tab ? 'var(--accent)' : 'var(--muted)', borderBottom: mdTab === tab ? '2px solid var(--accent)' : '2px solid transparent', fontFamily:FONT_UI }}>
-                {tab === 'edit' ? 'Edit' : 'Preview'}
-              </button>
-            ))}
-          </div>
-        )}
-
-        {externallyChanged && (
-          <span onClick={onReload} title="Press L to reload" style={{ fontSize:'10px', color:'var(--warning, #b8860b)', background:'var(--warning-sub, #fdf6e3)', padding:'1px 6px', borderRadius:'4px', cursor:'pointer', flexShrink:0, fontFamily:FONT_UI }}>
-            changed externally
-          </span>
-        )}
-
-        <div style={{ marginLeft:'auto', display:'flex', alignItems:'center', gap:'8px' }}>
-          {isEditing ? (
-            <>
-              <button onClick={onSave} disabled={!isDirty} style={{ background: isDirty ? 'var(--accent-sub)' : 'transparent', border:`1px solid ${isDirty ? 'var(--accent)' : 'var(--border)'}`, color: isDirty ? 'var(--accent)' : 'var(--muted)', cursor: isDirty ? 'pointer' : 'default', fontSize:'11px', padding:'2px 8px', borderRadius:'4px', fontFamily:FONT_UI }}>Save</button>
-              <button onClick={onExitEdit} style={{ background:'none', border:'1px solid var(--border)', color:'var(--muted)', cursor:'pointer', fontSize:'11px', padding:'2px 8px', borderRadius:'4px', fontFamily:FONT_UI }}>Exit</button>
-            </>
-          ) : diffMode ? (
-            <>
-              <button onClick={() => setDiffSideBySide(p => !p)} title="Shift+D"
-                style={{ background: diffSideBySide ? 'var(--accent-sub)' : 'none', border:`1px solid ${diffSideBySide ? 'var(--accent)' : 'var(--border)'}`, color: diffSideBySide ? 'var(--accent)' : 'var(--muted)', cursor:'pointer', fontSize:'11px', padding:'2px 8px', borderRadius:'4px', fontFamily:FONT_UI }}>
-                {diffSideBySide ? 'Split' : 'Inline'}
-              </button>
-              <button onClick={onExitDiff} style={{ background:'none', border:'1px solid var(--border)', color:'var(--muted)', cursor:'pointer', fontSize:'11px', padding:'2px 8px', borderRadius:'4px', fontFamily:FONT_UI }}>V View</button>
-            </>
-          ) : (
-            <>
-              <button onClick={copyAll} title="Copy all"
-                onMouseEnter={e => { e.currentTarget.style.background='var(--surface-2)'; e.currentTarget.style.borderColor='var(--accent)'; e.currentTarget.style.color='var(--text)' }}
-                onMouseLeave={e => { e.currentTarget.style.background='none'; e.currentTarget.style.borderColor='var(--border)'; e.currentTarget.style.color='var(--muted)' }}
-                style={{ background:'none', border:'1px solid var(--border)', color: copied ? 'var(--accent)' : 'var(--muted)', cursor:'pointer', fontSize:'11px', padding:'2px 8px', borderRadius:'4px', fontFamily:FONT_UI, transition:'all 150ms' }}>{copied ? 'Copied' : 'Copy'}</button>
-              {gitDirty && (
-                <button onClick={onEnterDiff} title="D Diff"
-                  onMouseEnter={e => { e.currentTarget.style.background='var(--surface-2)'; e.currentTarget.style.borderColor='var(--accent)'; e.currentTarget.style.color='var(--text)' }}
-                  onMouseLeave={e => { e.currentTarget.style.background='none'; e.currentTarget.style.borderColor='var(--border)'; e.currentTarget.style.color='var(--muted)' }}
-                  style={{ background:'none', border:'1px solid var(--border)', color:'var(--muted)', cursor:'pointer', fontSize:'11px', padding:'2px 8px', borderRadius:'4px', fontFamily:FONT_UI, transition:'all 150ms' }}>D Diff</button>
-              )}
-              <button onClick={onEnterEdit}
-                onMouseEnter={e => { e.currentTarget.style.background='var(--surface-2)'; e.currentTarget.style.borderColor='var(--accent)'; e.currentTarget.style.color='var(--text)' }}
-                onMouseLeave={e => { e.currentTarget.style.background='none'; e.currentTarget.style.borderColor='var(--border)'; e.currentTarget.style.color='var(--muted)' }}
-                style={{ background:'none', border:'1px solid var(--border)', color:'var(--muted)', cursor:'pointer', fontSize:'11px', padding:'2px 8px', borderRadius:'4px', fontFamily:FONT_UI, transition:'all 150ms' }}>E Edit</button>
-            </>
-          )}
-          <span style={{ fontFamily:FONT_MONO, fontSize:'11px', color:'var(--muted)', minWidth:'52px', textAlign:'right' }}>{lineCount} lines</span>
-          <button onClick={onClose} style={{ background:'transparent', border:'none', color:'var(--muted)', cursor:'pointer', fontSize:'16px', lineHeight:1, padding:'0 2px' }}>&times;</button>
-        </div>
-      </div>
-
-      {/* Search bar */}
       {searchOpen && canSearch && (
-        <div style={{ height:'32px', minHeight:'32px', borderBottom:'1px solid var(--border)', display:'flex', alignItems:'center', padding:'0 16px', gap:'8px', flexShrink:0, background:'var(--surface-2)' }}>
-          <input
-            ref={searchInputRef}
-            value={searchQuery}
-            onChange={e => { setSearchQuery(e.target.value); setCurrentMatchIdx(0) }}
-            onKeyDown={e => {
-              if (e.key === 'Enter') { e.preventDefault(); e.shiftKey ? searchPrev() : searchNext() }
-              else if (e.key === 'Escape') {
-                e.preventDefault()
-                e.stopPropagation()
-                e.nativeEvent.stopImmediatePropagation()
-                closeSearch()
-              }
-            }}
-            placeholder="Search…"
-            spellCheck={false}
-            style={{ flex:'0 1 240px', background:'var(--surface)', border:'1px solid var(--border)', borderRadius:'4px', padding:'4px 8px', fontSize:'12px', fontFamily:FONT_MONO, color:'var(--text)', outline:'none' }}
-          />
-          <span style={{ fontSize:'11px', color:'var(--muted)', fontFamily:FONT_MONO, minWidth:'48px' }}>
-            {searchQuery ? `${totalMatches > 0 ? currentMatchIdx + 1 : 0}/${totalMatches}` : ''}
-          </span>
-          <button onClick={searchPrev} disabled={totalMatches === 0} style={{ background:'none', border:'none', color: totalMatches > 0 ? 'var(--text)' : 'var(--muted)', cursor:'pointer', fontSize:'12px', padding:'4px 6px', lineHeight:1 }}>&#x25B2;</button>
-          <button onClick={searchNext} disabled={totalMatches === 0} style={{ background:'none', border:'none', color: totalMatches > 0 ? 'var(--text)' : 'var(--muted)', cursor:'pointer', fontSize:'12px', padding:'4px 6px', lineHeight:1 }}>&#x25BC;</button>
-          <button onClick={closeSearch} style={{ background:'none', border:'none', color:'var(--muted)', cursor:'pointer', fontSize:'14px', padding:'4px 6px', lineHeight:1 }}>&times;</button>
-        </div>
+        <ViewerSearchBar
+          inputRef={searchInputRef} query={searchQuery} onQueryChange={handleSearchQueryChange}
+          currentMatchIdx={currentMatchIdx} totalMatches={totalMatches}
+          onNext={searchNext} onPrev={searchPrev} onClose={closeSearch}
+        />
       )}
 
       {/* Content — code viewer & edit pane fill via flex; markdown flows in scroll container. */}
@@ -509,29 +256,11 @@ const FileViewer = ({
             : !diffData ? <div style={{ padding:'24px', color:'var(--muted)', fontSize:'12px' }}>Loading diff…</div>
             : <DiffView diff={diffData} sideBySide={diffSideBySide} />
           ) : showEditPane ? (
-            <div style={{ display:'flex', flex:1, overflow:'hidden', minHeight:0 }}>
-              <pre ref={lineNumbersRef} style={{
-                margin: 0,
-                padding: `${EDIT_PADDING_PX}px 12px 0 0`,
-                width: LINE_NUM_WIDTH,
-                flexShrink: 0,
-                overflow: 'hidden',
-                borderRight: '1px solid var(--border)',
-                background: 'var(--surface)',
-                fontFamily: FONT_MONO,
-                fontSize: `${editFontPx}px`,
-                lineHeight: `${editLinePx}px`,
-                color: 'var(--border)',
-                textAlign: 'right',
-                userSelect: 'none',
-                whiteSpace: 'pre',
-              }}>{lineNumbersText}</pre>
-              <textarea ref={textareaRef} value={editContent} onChange={e => onEditContentChange(e.target.value)} onKeyDown={handleTextareaKeyDown}
-                onScroll={handleTextareaScroll}
-                spellCheck={false}
-                wrap={wrapEnabled ? 'soft' : 'off'}
-                style={{ flex:1, background:'var(--surface)', color:'var(--text)', border:'none', outline:'none', resize:'none', padding:`${EDIT_PADDING_PX}px`, fontFamily:FONT_MONO, fontSize:`${editFontPx}px`, lineHeight:`${editLinePx}px`, letterSpacing:'0.01em', whiteSpace: wrapEnabled ? 'pre-wrap' : 'pre', wordBreak: wrapEnabled ? 'break-all' : undefined }} />
-            </div>
+            <EditPane
+              textareaRef={textareaRef} editContent={editContent} isMd={isMd} editZoom={editZoom}
+              wrapEnabled={wrapEnabled} resetKey={selectedFile}
+              onEditContentChange={onEditContentChange} onSave={onSave} onExitEdit={onExitEdit} onToggleWrap={toggleWrap}
+            />
           ) : showPreviewPane ? (
             <MarkdownView content={editContent} isDark={isDark} fileDirPath={fileDirPath} rootPath={rootPath} onLinkOpen={onLinkOpen} brokenHrefs={brokenHrefs} zoom={mdZoom} onTaskToggle={onEditContentChange} onActivateEdit={() => setMdTab('edit')} />
           ) : isMd ? (
