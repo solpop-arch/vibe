@@ -331,7 +331,7 @@ function App() {
         .slice(0, RECENT_CHANGES_LIMIT)
         .map(f => makeRecentEntry(f.path, f.modifiedMs))
       setRecentChanges(recentFiles)
-      setDashboardData({ projectName: basenameOf(rootPath_) || 'project', projectPath: rootPath_, totalFiles: allFiles.length, totalFolders, langStats, docs: docsWithLines })
+      setDashboardData({ projectName: basenameOf(rootPath_) || 'project', projectPath: rootPath_, totalFiles: allFiles.length, totalFolders, langStats, docs: docsWithLines, fileTimes: new Map(allFiles.filter(f => f.modifiedMs).map(f => [f.path, f.modifiedMs])) })
     } catch (e) { console.error('Dashboard load failed:', e) }
   }, [])
 

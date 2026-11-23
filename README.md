@@ -40,10 +40,10 @@ On macOS, open the DMG and drag the app to your Applications folder.
 
 **Project dashboard** — When you open a project, vibe greets you with a dashboard instead of a blank editor. See your codebase at a glance:
 
-- **Project stats** — file count, folder count, language breakdown
-- **Documents** — markdown docs in your project root and `docs/` subdirectories, auto-grouped and listed
-- **Recently Changed** — last 10 modified files, so you can immediately see what your AI CLI just touched
-- **Git status** — current branch and working tree state
+- **Changed files** — uncommitted git changes, newest first, so you can immediately see what your AI CLI just touched (recently modified files when the tree is clean or not a repo)
+- **Documents** — markdown docs grouped by top-level folder (collapsed by default), with pinning
+- **Link health** — broken links and orphan docs, collapsed to a one-line summary (hidden when there are none)
+- **Header** — branch, working tree state, file and doc counts
 
 This is especially useful when returning to a project after an AI session — you can quickly orient yourself without digging through the file tree.
 
