@@ -4,8 +4,6 @@ pub const IGNORED: &[&str] = &[
     "target",
     ".next",
     "dist",
-    ".gemini",
-    "vibe-python",
     ".claude",
     "__pycache__",
     "venv",

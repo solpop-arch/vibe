@@ -1,5 +1,5 @@
 {
-  "$schema": "https://raw.githubusercontent.com/nicovank/tauri-v2-schema/refs/heads/main/tauri.conf.json",
+  "$schema": "https://schema.tauri.app/config/2",
   "productName": "vibe",
   "version": "1.2.0",
   "identifier": "com.vibe.desktop",
