@@ -358,6 +358,7 @@ function App() {
 
   const saveFile = useCallback(async () => {
     if (!selectedFileRef.current) return
+    if (externallyChangedRef.current && !window.confirm('This file was changed externally. Overwrite it with your edits?')) return
     try { await api.writeFile(selectedFileRef.current.path, editContentRef.current); setFileContent(editContentRef.current) }
     catch (e) { console.error('Save failed:', e) }
   }, [])

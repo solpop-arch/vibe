@@ -6,8 +6,14 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkBreaks from 'remark-breaks'
 import rehypeRaw from 'rehype-raw'
+import rehypeSanitize, { defaultSchema } from 'rehype-sanitize'
 import * as api from '../api'
 import { FONT_MONO, FONT_SERIF } from '../constants'
+
+// Raw HTML in markdown is sanitized (scripts, event handlers, iframes, javascript: URLs
+// are dropped). Heading ids keep their plain form (no `user-content-` prefix) so
+// in-page anchors keep working; task-list checkboxes from remark-gfm stay allowed.
+const SANITIZE_SCHEMA = { ...defaultSchema, clobberPrefix: '' }
 
 // CommonMark doesn't close `**...**` emphasis when a letter follows the closer,
 // so `**강조**를` never becomes bold. Preprocess by converting that exact
@@ -297,7 +303,7 @@ export default function MarkdownView({ content, isDark, fileDirPath, rootPath, o
 
   return (
     <div ref={containerRef} onDoubleClick={onActivateEdit ? handleDoubleClick : undefined} style={{ color:'var(--text)', lineHeight:'1.75', fontSize:'14px', maxWidth:'72ch', zoom }}>
-      <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]} rehypePlugins={[rehypeRaw]} components={components}>{processedContent}</ReactMarkdown>
+      <ReactMarkdown remarkPlugins={[[remarkGfm, { singleTilde: false }], remarkBreaks]} rehypePlugins={[rehypeRaw, [rehypeSanitize, SANITIZE_SCHEMA]]} components={components}>{processedContent}</ReactMarkdown>
     </div>
   )
 }
