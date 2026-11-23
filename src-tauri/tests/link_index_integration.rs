@@ -72,15 +72,15 @@ fn build_sync_populates_graph_from_disk() {
 fn ignored_dirs_skipped() {
     let root = fresh_tmp("ignored");
 
-    let _ = write(&root, "real.md", "hello\n");
-    let _ = write(&root, "node_modules/fake.md", "[x](./real.md)\n");
+    let _ = write(&root, "docs/real.md", "hello\n");
+    let _ = write(&root, "node_modules/fake.md", "[x](../docs/real.md)\n");
     let _ = write(&root, ".git/HEAD", "ref: refs/heads/main\n");
 
     let graph = LinkGraph::new();
     graph.set_root(Some(root.clone()));
     graph.build_sync();
 
-    assert_eq!(graph.orphans(), vec![root.join("real.md").to_string_lossy().into_owned()]);
+    assert_eq!(graph.orphans(), vec![root.join("docs/real.md").to_string_lossy().into_owned()]);
     assert!(graph.broken_links().is_empty());
 
     fs::remove_dir_all(&root).ok();
