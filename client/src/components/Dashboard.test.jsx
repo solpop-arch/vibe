@@ -130,6 +130,43 @@ describe('Documents (all shown)', () => {
   })
 })
 
+describe('Documents sub-folders', () => {
+  const nested = () => [
+    doc('docs/product.md'), doc('docs/plan/a.md'), doc('docs/plan/b.md'), doc('docs/architecture/c.md'), doc('docs/plan/x/deep.md'),
+  ]
+  const open = () => { mount({ data: { ...props().data, docs: nested() } }); fireEvent.click(screen.getByText('docs/')) }
+  it('groups an opened folder by sub-folder with counts; direct files come first', () => {
+    open()
+    expect(screen.getByText('plan/')).toBeTruthy()
+    expect(screen.getByText('architecture/')).toBeTruthy()
+    expect(screen.getByText('plan/x/')).toBeTruthy()
+    const direct = screen.getByText('product.md'), plan = screen.getByText('plan/')
+    expect(direct.compareDocumentPosition(plan) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(screen.getByText('(2)')).toBeTruthy()   // plan: a.md, b.md
+  })
+  it('sub-folders start open, close on click and remember it', () => {
+    const { unmount } = (() => { const r = mount({ data: { ...props().data, docs: nested() } }); fireEvent.click(screen.getByText('docs/')); return r })()
+    expect(screen.getByText('a.md')).toBeTruthy()
+    fireEvent.click(screen.getByText('plan/'))
+    expect(screen.queryByText('a.md')).toBeNull()
+    unmount()
+    mount({ data: { ...props().data, docs: nested() } })   // 'docs/' stays open (remembered)
+    expect(screen.queryByText('a.md')).toBeNull()
+    expect(screen.getByText('c.md')).toBeTruthy()
+  })
+  it('does not repeat the directory under each file in an opened folder', () => {
+    open()
+    expect(screen.queryByText('docs/plan/')).toBeNull()
+    expect(screen.getAllByText('docs/')).toHaveLength(1)
+  })
+  it('a folder with only direct files shows no sub-headers', () => {
+    mount()
+    fireEvent.click(screen.getByText('notes/'))
+    expect(screen.getByText('n.md')).toBeTruthy()
+    expect(screen.getAllByText(/\/$/).map(e => e.textContent)).toEqual(['▼docs/(2)', '▼notes/(1)'])  // top-level labels only, no sub-headers
+  })
+})
+
 describe('Link health', () => {
   const broken = (n) => Array.from({ length: n }, (_, i) => ({ source: `${R}/s${i}.md`, line: i + 1, kind: 'link', rawHref: `./g${i}.md` }))
   const orphans = (n) => Array.from({ length: n }, (_, i) => `${R}/docs/o${i}.md`)

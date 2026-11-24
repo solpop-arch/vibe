@@ -3,16 +3,20 @@ import { FONT_MONO, FONT_SERIF, SECTION_LABEL, DIVIDER, getDocIcon, gitBadgeFor,
 import GraphView from './GraphView'
 import ChangedFiles from './ChangedFiles'
 import LinkHealth from './LinkHealth'
+import { subGroups } from '../docGroups'
 
 const EXPANDED_KEY    = 'vibe-dashboard-expanded'  // folder groups the user opened (all start closed)
+const CLOSED_SUBS_KEY = 'vibe-dashboard-closed-subs'  // sub-folders the user closed (open by default)
 const PINNED_KEY      = 'vibe-dashboard-pinned'
 const SUB_LABEL = { fontSize:'11px', fontWeight:600, color:'var(--text)', marginBottom:'8px', letterSpacing:'0.02em' }
 function loadExpanded() { try { return new Set(JSON.parse(localStorage.getItem(EXPANDED_KEY))) } catch { return new Set() } }
 function saveExpanded(set) { localStorage.setItem(EXPANDED_KEY, JSON.stringify([...set])) }
+function loadClosedSubs() { try { return new Set(JSON.parse(localStorage.getItem(CLOSED_SUBS_KEY))) } catch { return new Set() } }
+function saveClosedSubs(set) { localStorage.setItem(CLOSED_SUBS_KEY, JSON.stringify([...set])) }
 function loadPinned()    { try { return new Set(JSON.parse(localStorage.getItem(PINNED_KEY)))    } catch { return new Set() } }
 function savePinned(set) { localStorage.setItem(PINNED_KEY,    JSON.stringify([...set])) }
 
-function DocItem({ doc, gitInfo, isPinned, onTogglePin, onFileOpen, age }) {
+function DocItem({ doc, gitInfo, isPinned, onTogglePin, onFileOpen, age, hideDir }) {
   const icon = getDocIcon(doc.name)
   const gitState = gitInfo?.filesByAbs?.get(doc.path)
   const badge = gitBadgeFor(gitState)
@@ -25,7 +29,7 @@ function DocItem({ doc, gitInfo, isPinned, onTogglePin, onFileOpen, age }) {
       <span style={{ fontSize:'14px', width:'20px', textAlign:'center', flexShrink:0, color:'var(--muted)' }}>{icon}</span>
       <div style={{ flex:1, minWidth:0 }}>
         <div style={{ fontSize:'13px', fontWeight:500, color:'var(--text)', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{doc.name}</div>
-        {doc.relDir && <div style={{ fontFamily:FONT_MONO, fontSize:'11px', color:'var(--muted)', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{doc.relDir}/</div>}
+        {doc.relDir && !hideDir && <div style={{ fontFamily:FONT_MONO, fontSize:'11px', color:'var(--muted)', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{doc.relDir}/</div>}
       </div>
       <button
         className={`dash-pin${isPinned ? ' pinned' : ''}`}
@@ -54,6 +58,15 @@ function ProjectDashboard({ data, recentChanges, brokenLinks, orphanDocs, graphD
 
   const [expanded, setExpanded] = useState(loadExpanded)
   const [pinned, setPinned] = useState(loadPinned)
+  const [closedSubs, setClosedSubs] = useState(loadClosedSubs)
+  const toggleSub = useCallback((key) => {
+    setClosedSubs(prev => {
+      const next = new Set(prev)
+      next.has(key) ? next.delete(key) : next.add(key)
+      saveClosedSubs(next)
+      return next
+    })
+  }, [])
 
   const toggleGroup = useCallback((groupName) => {
     setExpanded(prev => {
@@ -174,9 +187,26 @@ function ProjectDashboard({ data, recentChanges, brokenLinks, orphanDocs, graphD
                         {label}
                         <span style={{ fontSize:'10px', fontFamily:FONT_MONO, fontStyle:'normal', opacity:0.6 }}>({group.total})</span>
                       </div>
-                      {!isCollapsed && group.items.map(doc => (
-                        <DocItem key={doc.path} doc={doc} gitInfo={gitInfo} isPinned={pinned.has(doc.path)} onTogglePin={togglePin} onFileOpen={onFileOpen} />
-                      ))}
+                      {!isCollapsed && subGroups(group.items, group.folder).map(sub => {
+                        const subClosed = sub.key !== '' && closedSubs.has(sub.key)
+                        return (
+                          <div key={sub.key || '__direct'} style={sub.key ? { paddingLeft:'12px' } : undefined}>
+                            {sub.key !== '' && (
+                              <div onClick={() => toggleSub(sub.key)}
+                                onMouseEnter={e => e.currentTarget.style.color = 'var(--text)'}
+                                onMouseLeave={e => e.currentTarget.style.color = 'var(--muted)'}
+                                style={{ fontFamily:FONT_MONO, fontSize:'11px', color:'var(--muted)', margin:'6px 0 2px', paddingLeft:'4px', cursor:'pointer', display:'flex', alignItems:'center', gap:'6px', transition:'color 100ms' }}>
+                                <span style={{ fontSize:'8px', opacity:0.4, display:'inline-block', transform: subClosed ? 'rotate(-90deg)' : 'rotate(0)', transition:'transform 150ms' }}>▼</span>
+                                {sub.label}
+                                <span style={{ fontSize:'10px', opacity:0.6 }}>({sub.items.length})</span>
+                              </div>
+                            )}
+                            {!subClosed && sub.items.map(doc => (
+                              <DocItem key={doc.path} doc={doc} gitInfo={gitInfo} isPinned={pinned.has(doc.path)} onTogglePin={togglePin} onFileOpen={onFileOpen} hideDir />
+                            ))}
+                          </div>
+                        )
+                      })}
                     </div>
                   )
                 })}
