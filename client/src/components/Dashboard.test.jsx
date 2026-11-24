@@ -120,6 +120,16 @@ describe('Documents', () => {
   })
 })
 
+describe('Documents (all shown)', () => {
+  it('lists every doc in an expanded folder, not just the first few', () => {
+    const many = Array.from({ length: 8 }, (_, i) => doc(`docs/d${i}.md`, NOW - i * 1000))
+    mount({ data: { ...props().data, docs: many } })
+    expect(screen.getByText('(8)')).toBeTruthy()
+    fireEvent.click(screen.getByText('docs/'))
+    expect(screen.getAllByText(/^d\d\.md$/)).toHaveLength(8)
+  })
+})
+
 describe('Link health', () => {
   const broken = (n) => Array.from({ length: n }, (_, i) => ({ source: `${R}/s${i}.md`, line: i + 1, kind: 'link', rawHref: `./g${i}.md` }))
   const orphans = (n) => Array.from({ length: n }, (_, i) => `${R}/docs/o${i}.md`)

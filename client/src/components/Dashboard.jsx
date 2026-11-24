@@ -6,7 +6,6 @@ import LinkHealth from './LinkHealth'
 
 const EXPANDED_KEY    = 'vibe-dashboard-expanded'  // folder groups the user opened (all start closed)
 const PINNED_KEY      = 'vibe-dashboard-pinned'
-const DOCS_PER_FOLDER   = 5  // most-recent docs shown per top-level folder
 const SUB_LABEL = { fontSize:'11px', fontWeight:600, color:'var(--text)', marginBottom:'8px', letterSpacing:'0.02em' }
 function loadExpanded() { try { return new Set(JSON.parse(localStorage.getItem(EXPANDED_KEY))) } catch { return new Set() } }
 function saveExpanded(set) { localStorage.setItem(EXPANDED_KEY, JSON.stringify([...set])) }
@@ -76,8 +75,7 @@ function ProjectDashboard({ data, recentChanges, brokenLinks, orphanDocs, graphD
 
   const allDocs = useMemo(() => data?.docs ?? [], [data])
   const pinnedDocs = useMemo(() => allDocs.filter(d => pinned.has(d.path)), [allDocs, pinned])
-  // Group every doc under its top-level folder; each folder keeps only its most
-  // recently changed docs, but reports its full doc count.
+  // Group every doc under its top-level folder, newest first.
   const folderGroups = useMemo(() => {
     const map = new Map()
     for (const d of allDocs) {
@@ -87,7 +85,7 @@ function ProjectDashboard({ data, recentChanges, brokenLinks, orphanDocs, graphD
     }
     const groups = [...map.entries()].map(([folder, items]) => {
       const sorted = items.sort((a, b) => (b.modifiedMs || 0) - (a.modifiedMs || 0))
-      return { folder, items: sorted.slice(0, DOCS_PER_FOLDER), total: sorted.length }
+      return { folder, items: sorted, total: sorted.length }
     })
     groups.sort((a, b) => a.folder === '' ? -1 : b.folder === '' ? 1 : a.folder.localeCompare(b.folder))
     return groups
